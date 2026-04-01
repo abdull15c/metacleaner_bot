@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Пользователь{% endblock %}
+{% block page_title %}Пользователь{% endblock %}
+{% block content %}
+{% if not user %}<div style="color:var(--red)">Не найден</div>{% else %}
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+<div class="card"><div class="ch">Профиль</div><table>
+<tr><td class="mut" style="width:140px">Telegram ID</td><td><code>{{ user.telegram_id }}</code></td></tr>
+<tr><td class="mut">Username</td><td>{% if user.username %}@{{ user.username }}{% else %}—{% endif %}</td></tr>
+<tr><td class="mut">Имя</td><td>{{ user.first_name or '—' }}</td></tr>
+<tr><td class="mut">Статус</td><td>{% if user.is_banned %}<span class="badge failed">banned</span>{% else %}<span class="badge done">active</span>{% endif %}</td></tr>
+<tr><td class="mut">Задач сегодня</td><td class="mono">{{ user.daily_job_count }}</td></tr>
+</table></div>
+<div class="card" style="display:flex;flex-direction:column;gap:12px;height:fit-content"><div class="ch">Действия</div>
+{% if not user.is_banned %}<form method="post" action="/admin/users/{{ user.telegram_id }}/ban"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn br wf" onclick="return confirm('Заблокировать?')">🚫 Заблокировать</button></form>
+{% else %}<form method="post" action="/admin/users/{{ user.telegram_id }}/unban"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn bg wf">✓ Разблокировать</button></form>{% endif %}
+</div></div>
+<div class="stitle">Задачи</div>
+<div class="card"><table><thead><tr><th>ID</th><th>Тип</th><th>Статус</th><th>Размер</th><th>Создана</th></tr></thead>
+<tbody>{% for j in jobs %}<tr>
+<td><a href="/admin/jobs/{{ j.uuid }}" style="color:var(--acc);text-decoration:none"><code>#{{ j.uuid[:8] }}</code></a></td>
+<td><code>{{ j.source_type.value }}</code></td>
+<td><span class="badge {{ j.status.value }}">{{ j.status.value }}</span></td>
+<td class="mono mut">{% if j.processed_size_bytes %}{{ "%.1f"|format(j.processed_size_bytes/1048576) }} MB{% else %}—{% endif %}</td>
+<td class="mono mut">{{ j.created_at.strftime('%d.%m %H:%M') if j.created_at }}</td>
+</tr>{% else %}<tr><td colspan="5" class="mut" style="text-align:center;padding:20px">Задач нет</td></tr>{% endfor %}</tbody>
+</table></div>{% endif %}
+{% endblock %}

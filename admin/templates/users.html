@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Пользователи{% endblock %}
+{% block page_title %}Пользователи ({{ total }}){% endblock %}
+{% block content %}
+<div class="card"><div style="overflow-x:auto"><table>
+<thead><tr><th>Telegram ID</th><th>Username</th><th>Имя</th><th>Статус</th><th>Задач сегодня</th><th>Последняя активность</th></tr></thead>
+<tbody>{% for u in users %}<tr>
+<td><a href="/admin/users/{{ u.telegram_id }}" style="color:var(--acc);text-decoration:none"><code>{{ u.telegram_id }}</code></a></td>
+<td>{% if u.username %}@{{ u.username }}{% else %}<span class="mut">—</span>{% endif %}</td>
+<td>{{ u.first_name or '—' }}</td>
+<td>{% if u.is_banned %}<span class="badge failed">banned</span>{% else %}<span class="badge done">active</span>{% endif %}</td>
+<td class="mono mut">{{ u.daily_job_count }}</td>
+<td class="mono mut">{{ u.last_seen_at.strftime('%d.%m %H:%M') if u.last_seen_at else '—' }}</td>
+</tr>{% else %}<tr><td colspan="6" class="mut" style="text-align:center;padding:30px">Нет пользователей</td></tr>{% endfor %}</tbody>
+</table></div></div>
+{% if total_pages>1 %}<div class="pag">{% if page>1 %}<a href="?page={{ page-1 }}">← Назад</a>{% endif %}<span>{{ page }} / {{ total_pages }}</span>{% if page<total_pages %}<a href="?page={{ page+1 }}">Вперёд →</a>{% endif %}</div>{% endif %}
+{% endblock %}

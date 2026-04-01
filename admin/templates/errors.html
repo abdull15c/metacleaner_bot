@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Ошибки{% endblock %}
+{% block page_title %}Системные ошибки{% endblock %}
+{% block content %}
+<div class="card"><div style="overflow-x:auto"><table>
+<thead><tr><th>Уровень</th><th>Модуль</th><th>Сообщение</th><th>Время</th></tr></thead>
+<tbody>{% for log in logs %}<tr>
+<td><span class="badge failed">{{ log.level.value }}</span></td>
+<td><code>{{ log.module }}</code></td>
+<td style="max-width:500px;word-break:break-word">{{ log.message }}</td>
+<td class="mono mut">{{ log.created_at.strftime('%d.%m %H:%M:%S') if log.created_at }}</td>
+</tr>{% else %}<tr><td colspan="4" class="mut" style="text-align:center;padding:40px">✓ Ошибок нет</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

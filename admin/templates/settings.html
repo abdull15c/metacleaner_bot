@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Настройки{% endblock %}
+{% block page_title %}Настройки{% endblock %}
+{% block content %}
+{% if saved %}<div class="alert-ok">✓ Сохранено</div>{% endif %}
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:24px;align-items:start">
+<div class="card"><div class="ch">Runtime настройки</div>
+<form method="post" action="/admin/settings">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/>
+{% for s in settings %}
+<div class="fg"><label>{{ s.key }}</label>
+{% if s.value in ('true','false') %}
+<select name="{{ s.key }}"><option value="true" {% if s.value=='true' %}selected{% endif %}>true (включено)</option><option value="false" {% if s.value=='false' %}selected{% endif %}>false (отключено)</option></select>
+{% else %}<input type="text" name="{{ s.key }}" value="{{ s.value }}"/>{% endif %}
+{% if s.description %}<div style="font-size:11px;color:var(--mut);margin-top:4px">{{ s.description }}</div>{% endif %}
+</div>{% endfor %}
+<button type="submit" class="btn bp">Сохранить</button>
+</form></div>
+<div style="display:flex;flex-direction:column;gap:16px">
+<div class="card"><div class="ch">Обработка</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<form method="post" action="/admin/processing/pause"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn bw wf sm">⏸ Остановить</button></form>
+<form method="post" action="/admin/processing/resume"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn bg wf sm">▶ Возобновить</button></form>
+</div></div>
+<div class="card"><div class="ch">Обслуживание</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<form method="post" action="/admin/maintenance/on"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn br wf sm">🛠 Включить</button></form>
+<form method="post" action="/admin/maintenance/off"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn bg wf sm">✓ Выключить</button></form>
+</div></div>
+<div class="card"><div class="ch">Cleanup</div>
+<form method="post" action="/admin/cleanup/run"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn bh wf sm">🗑 Запустить</button></form>
+</div></div></div>
+{% endblock %}

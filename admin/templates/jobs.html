@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Задачи{% endblock %}
+{% block page_title %}Задачи ({{ total }}){% endblock %}
+{% block content %}
+<div class="card"><div style="overflow-x:auto"><table>
+<thead><tr><th>ID</th><th>Пользователь</th><th>Тип</th><th>Статус</th><th>Файл</th><th>До</th><th>После</th><th>Создана</th></tr></thead>
+<tbody>
+{% for j in jobs %}
+<tr>
+  <td><a href="/admin/jobs/{{ j.uuid }}" style="color:var(--acc);text-decoration:none"><code>#{{ j.uuid[:8] }}</code></a></td>
+  <td>{% if j.user %}<a href="/admin/users/{{ j.user.telegram_id }}" style="color:var(--txt);text-decoration:none">{% if j.user.username %}@{{ j.user.username }}{% else %}{{ j.user.telegram_id }}{% endif %}</a>{% else %}—{% endif %}</td>
+  <td><code>{{ j.source_type.value }}</code></td>
+  <td><span class="badge {{ j.status.value }}">{{ j.status.value }}</span></td>
+  <td class="mut" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ j.original_filename or '—' }}</td>
+  <td class="mono mut">{% if j.original_size_bytes %}{{ "%.1f"|format(j.original_size_bytes/1048576) }} MB{% else %}—{% endif %}</td>
+  <td class="mono mut">{% if j.processed_size_bytes %}{{ "%.1f"|format(j.processed_size_bytes/1048576) }} MB{% else %}—{% endif %}</td>
+  <td class="mono mut">{{ j.created_at.strftime('%d.%m %H:%M') if j.created_at }}</td>
+</tr>
+{% else %}<tr><td colspan="8" class="mut" style="text-align:center;padding:30px">Задач нет</td></tr>
+{% endfor %}
+</tbody></table></div></div>
+{% if total_pages > 1 %}<div class="pag">{% if page>1 %}<a href="?page={{ page-1 }}">← Назад</a>{% endif %}<span>{{ page }} / {{ total_pages }}</span>{% if page<total_pages %}<a href="?page={{ page+1 }}">Вперёд →</a>{% endif %}</div>{% endif %}
+{% endblock %}

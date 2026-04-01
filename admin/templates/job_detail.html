@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Задача{% endblock %}
+{% block page_title %}Задача <code style="font-size:14px">#{{ job.uuid[:8] if job }}</code>{% endblock %}
+{% block content %}
+{% if not job %}<div class="alert-ok" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--red)">Задача не найдена</div>
+{% else %}
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+<div class="card"><div class="ch">Основное</div><table>
+<tr><td class="mut" style="width:140px">UUID</td><td><code>{{ job.uuid }}</code></td></tr>
+<tr><td class="mut">Статус</td><td><span class="badge {{ job.status.value }}">{{ job.status.value }}</span></td></tr>
+<tr><td class="mut">Тип</td><td><code>{{ job.source_type.value }}</code></td></tr>
+<tr><td class="mut">Файл</td><td>{{ job.original_filename or '—' }}</td></tr>
+<tr><td class="mut">Размер до</td><td class="mono">{% if job.original_size_bytes %}{{ "%.2f"|format(job.original_size_bytes/1048576) }} MB{% else %}—{% endif %}</td></tr>
+<tr><td class="mut">Размер после</td><td class="mono">{% if job.processed_size_bytes %}{{ "%.2f"|format(job.processed_size_bytes/1048576) }} MB{% else %}—{% endif %}</td></tr>
+<tr><td class="mut">Cleanup</td><td>{% if job.cleanup_done %}<span class="badge done">done</span>{% else %}<span class="badge pending">pending</span>{% endif %}</td></tr>
+</table></div>
+<div class="card"><div class="ch">Временные метки</div><table>
+<tr><td class="mut" style="width:120px">Создана</td><td class="mono">{{ job.created_at }}</td></tr>
+<tr><td class="mut">Начата</td><td class="mono">{{ job.started_at or '—' }}</td></tr>
+<tr><td class="mut">Завершена</td><td class="mono">{{ job.completed_at or '—' }}</td></tr>
+</table></div>
+</div>
+{% if job.error_message %}<div class="card mb"><div class="ch" style="color:var(--red)">Ошибка</div><code style="color:var(--red);word-break:break-all">{{ job.error_message }}</code></div>{% endif %}
+<div class="card"><div class="ch">События</div><table>
+<thead><tr><th>Событие</th><th>Детали</th><th>Время</th></tr></thead>
+<tbody>{% for r in job.reports %}<tr><td><code>{{ r.event }}</code></td><td class="mut">{{ r.details or '—' }}</td><td class="mono mut">{{ r.created_at.strftime('%d.%m %H:%M:%S') if r.created_at }}</td></tr>{% else %}<tr><td colspan="3" class="mut" style="text-align:center">Нет событий</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endif %}
+{% endblock %}

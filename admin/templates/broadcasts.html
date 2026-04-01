@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Рассылки{% endblock %}
+{% block page_title %}Рассылки{% endblock %}
+{% block content %}
+{% if form_error == 'empty' %}<div class="alert-ok" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--red);margin-bottom:20px">Укажите заголовок и текст. После очистки HTML сообщение не должно быть пустым.</div>{% endif %}
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+<div class="card"><div class="ch">Новая рассылка</div>
+<form method="post" action="/admin/broadcasts">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/>
+<div class="fg"><label>Название</label><input type="text" name="title" required/></div>
+<div class="fg"><label>Текст (Telegram HTML: b, i, a, code, pre, tg-spoiler…; script удаляется)</label><textarea name="message_text" required></textarea></div>
+<button type="submit" class="btn bp">Создать черновик</button>
+</form></div>
+<div>{% for bc in broadcasts %}
+<div class="card" style="margin-bottom:12px">
+<div class="fb" style="margin-bottom:10px">
+<div><div style="font-weight:600;margin-bottom:4px">{{ bc.title }}</div><div class="mono mut" style="font-size:11px">{{ bc.created_at.strftime('%d.%m.%Y %H:%M') if bc.created_at }}</div></div>
+<span class="badge {{ bc.status.value }}">{{ bc.status.value }}</span></div>
+<div style="display:flex;gap:16px;margin-bottom:12px;font-size:12px;color:var(--mut)">
+<span>Всего: <b style="color:var(--txt)">{{ bc.target_count }}</b></span>
+<span>Отправлено: <b style="color:var(--grn)">{{ bc.sent_count }}</b></span>
+<span>Ошибок: <b style="color:{% if bc.failed_count %}var(--red){% else %}var(--mut){% endif %}">{{ bc.failed_count }}</b></span>
+</div>
+<div style="display:flex;gap:8px">
+{% if bc.status.value in ('draft','paused') %}<form method="post" action="/admin/broadcasts/{{ bc.id }}/start" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn bg sm">▶ Запустить</button></form>{% endif %}
+{% if bc.status.value == 'running' %}<form method="post" action="/admin/broadcasts/{{ bc.id }}/pause" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn bw sm">⏸ Пауза</button></form>{% endif %}
+</div></div>
+{% else %}<div class="mut" style="padding:20px 0">Рассылок нет</div>{% endfor %}
+</div></div>
+{% endblock %}

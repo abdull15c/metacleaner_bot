@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block content %}
+<div class="stats">
+  <div class="sc"><div class="sl">Всего задач</div><div class="sv a">{{ total_jobs }}</div></div>
+  <div class="sc"><div class="sl">Сегодня</div><div class="sv">{{ today_jobs }}</div></div>
+  <div class="sc"><div class="sl">Ошибок 24ч</div><div class="sv {% if errors_24h %}r{% endif %}">{{ errors_24h }}</div></div>
+  <div class="sc"><div class="sl">В очереди</div><div class="sv w">{{ pending_jobs }}</div></div>
+  <div class="sc"><div class="sl">Пользователей</div><div class="sv">{{ total_users }}</div></div>
+  <div class="sc"><div class="sl">Активных 24ч</div><div class="sv g">{{ active_today }}</div></div>
+  <div class="sc"><div class="sl">Файлов temp/</div><div class="sv {% if temp_files %}w{% endif %}">{{ temp_files }}</div></div>
+  <div class="sc"><div class="sl">Размер temp/</div><div class="sv" style="font-size:20px">{{ temp_size_mb }} MB</div></div>
+</div>
+<div class="fb mb"><div class="stitle">Последние задачи</div><a href="/admin/jobs" class="btn bh sm">Все →</a></div>
+<div class="card"><div style="overflow-x:auto"><table>
+<thead><tr><th>ID</th><th>Пользователь</th><th>Тип</th><th>Статус</th><th>Размер</th><th>Создана</th></tr></thead>
+<tbody>
+{% for j in recent_jobs %}
+<tr>
+  <td><a href="/admin/jobs/{{ j.uuid }}" style="color:var(--acc);text-decoration:none"><code>#{{ j.uuid[:8] }}</code></a></td>
+  <td class="mut">{% if j.user %}{% if j.user.username %}@{{ j.user.username }}{% else %}{{ j.user.telegram_id }}{% endif %}{% else %}—{% endif %}</td>
+  <td><code>{{ j.source_type.value }}</code></td>
+  <td><span class="badge {{ j.status.value }}">{{ j.status.value }}</span></td>
+  <td class="mut mono">{% if j.processed_size_bytes %}{{ "%.1f"|format(j.processed_size_bytes/1048576) }} MB{% else %}—{% endif %}</td>
+  <td class="mut mono">{{ j.created_at.strftime('%d.%m %H:%M') if j.created_at }}</td>
+</tr>
+{% else %}<tr><td colspan="6" class="mut" style="text-align:center;padding:30px">Задач пока нет</td></tr>
+{% endfor %}
+</tbody></table></div></div>
+{% endblock %}
