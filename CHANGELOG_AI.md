@@ -86,3 +86,7 @@
 - Загрузка Netscape `cookies.txt` в **Настройки** админки → `secrets/youtube_cookies.txt` (`core/youtube_cookies.py`).
 - Приоритет для yt-dlp: `YOUTUBE_COOKIES_FILE` в .env, иначе файл из админки; прокси по-прежнему `YOUTUBE_PROXY` в .env.
 - `YOUTUBE_COOKIES_ADMIN_PATH` в конфиге для смены пути; `secrets/*` в `.gitignore`.
+
+## 2026-04-02 (доп.) — сброс пароля админа
+
+- `scripts/reset_admin_password.py` — интерактивный сброс пароля по логину (тот же `hash_password`, что у входа).
