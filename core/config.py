@@ -5,6 +5,9 @@ from typing import Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Каталог репозитория (рядом с `core/`). Для Celery/admin важнее, чем `os.getcwd()`.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -39,6 +42,8 @@ class Settings(BaseSettings):
     youtube_cookies_file: Optional[Path] = None
     youtube_cookies_admin_path: Path = Path("secrets/youtube_cookies.txt")
     youtube_proxy: Optional[str] = None
+    # Переопределить корень проекта (если воркер стартует не из каталога репозитория).
+    metacleaner_root: Optional[Path] = None
     environment: str = "development"
     debug: bool = False
     log_level: str = "INFO"
@@ -69,12 +74,18 @@ class Settings(BaseSettings):
     @property
     def max_file_size_bytes(self): return self.max_file_size_mb * 1024 * 1024
 
+    @property
+    def project_root(self) -> Path:
+        if self.metacleaner_root is not None:
+            return self.metacleaner_root.expanduser().resolve()
+        return _PROJECT_ROOT
+
     def ensure_dirs(self):
         for d in [self.temp_upload_dir, self.temp_processed_dir, self.logs_dir]:
             d.mkdir(parents=True, exist_ok=True)
         secrets_parent = Path(self.youtube_cookies_admin_path).parent
         if not secrets_parent.is_absolute():
-            secrets_parent = Path.cwd() / secrets_parent
+            secrets_parent = self.project_root / secrets_parent
         secrets_parent.mkdir(parents=True, exist_ok=True)
 
 

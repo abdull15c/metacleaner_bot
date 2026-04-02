@@ -91,6 +91,12 @@
 
 - `scripts/reset_admin_password.py` — интерактивный сброс пароля по логину (тот же `hash_password`, что у входа).
 
+## 2026-04-02 — YouTube: пути cookies для Celery
+
+- `get_effective_youtube_cookies_path` и `resolve_admin_cookies_path`: относительные пути от `settings.project_root` (рядом с `core/`), не от `cwd`.
+- `METACLEANER_ROOT` в `.env` — опциональное переопределение корня; `ensure_dirs` для `secrets/` согласован.
+- `workers/downloader.py`: лог `yt-dlp YouTube: cookies=… proxy=on|off` для проверки аргументов.
+
 ## 2026-04-02 (аудит) — настройки, константы, middleware
 
 - POST `/admin/settings`: только ключи из `ALLOWED_SETTING_KEYS` (= `DEFAULTS` в `SettingsService`).

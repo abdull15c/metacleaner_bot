@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def _yt_dlp_extra_args():
-    """Cookies / proxy — см. DEPLOY.md; cookies из .env или из админки."""
+    """Cookies / proxy — DEPLOY.md; cookies из .env или из админки (пути от project_root)."""
     from core.youtube_cookies import get_effective_youtube_cookies_path
 
     args = []
@@ -16,9 +16,17 @@ def _yt_dlp_extra_args():
     if eff:
         args.extend(["--cookies", str(eff)])
     elif settings.youtube_cookies_file:
-        logger.warning("YOUTUBE_COOKIES_FILE set but file missing: %s", settings.youtube_cookies_file)
+        logger.warning(
+            "YOUTUBE_COOKIES_FILE set but file missing (resolved from project root): %s",
+            settings.youtube_cookies_file,
+        )
     if settings.youtube_proxy:
         args.extend(["--proxy", settings.youtube_proxy])
+    logger.info(
+        "yt-dlp YouTube: cookies=%s proxy=%s",
+        str(eff) if eff else "(none)",
+        "on" if settings.youtube_proxy else "off",
+    )
     return args
 
 

@@ -11,15 +11,21 @@ COOKIES_MAX_BYTES = 512 * 1024
 def resolve_admin_cookies_path() -> Path:
     p = Path(settings.youtube_cookies_admin_path)
     if not p.is_absolute():
-        p = Path.cwd() / p
+        p = settings.project_root / p
     return p.resolve()
 
 
 def get_effective_youtube_cookies_path() -> Optional[Path]:
-    """Сначала .env (YOUTUBE_COOKIES_FILE), иначе файл, загруженный из админки."""
+    """Сначала .env (YOUTUBE_COOKIES_FILE), иначе файл, загруженный из админки.
+
+    Относительные пути считаются от `project_root` (каталог репозитория), не от cwd —
+    иначе Celery worker с другим рабочим каталогом не находит cookies.
+    """
     env_p = settings.youtube_cookies_file
     if env_p:
         ep = Path(env_p)
+        if not ep.is_absolute():
+            ep = settings.project_root / ep
         if ep.is_file():
             return ep.resolve()
     admin_p = resolve_admin_cookies_path()

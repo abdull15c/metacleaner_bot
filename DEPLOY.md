@@ -150,6 +150,8 @@ YouTube часто режет **IP датацентров** и без «чело
 2. **Cookies из браузера** (Netscape): на ПК залогиниться в YouTube и экспортировать cookies (расширения вроде «Get cookies.txt LOCALLY»).
    - **Удобно:** админка → **Настройки** → блок **«YouTube — cookies»** → загрузить файл. Он сохранится в `secrets/youtube_cookies.txt` (каталог в `.gitignore`). Перезапуск Celery не обязателен.
    - **Либо** путь в `.env`: `YOUTUBE_COOKIES_FILE=/path/to/cookies.txt` — если файл существует, он **имеет приоритет** над загрузкой из админки.
+   - Пути `secrets/...` и относительный `YOUTUBE_COOKIES_FILE` резолвятся от **корня репозитория** (каталог с `core/`), а не от `cwd` процесса — воркер всё равно подхватит cookies. При нестандартном запуске задайте `METACLEANER_ROOT=/абсолютный/путь/к/metacleaner_bot`.
+   - В логе Celery при скачивании: строка `yt-dlp YouTube: cookies=... proxy=on|off` — так видно, что `--cookies` / `--proxy` реально подставлены.
    Cookies со временем протухают — обновляйте. **Не коммитьте** cookies в git.
 3. **Резидентный HTTP(S) прокси** (домашний IP или платный residential), если cookies недостаточно:
    ```env
