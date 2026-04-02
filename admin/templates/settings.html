@@ -33,14 +33,20 @@
 <div class="card"><div class="ch">YouTube — cookies (Netscape)</div>
 <p class="mut" style="font-size:12px;margin-bottom:14px;line-height:1.5">
 Файл <code>cookies.txt</code> из браузера (расширение вроде «Get cookies.txt LOCALLY»). Макс. 512 КБ.<br/>
-<b>Приоритет:</b> если в .env задан <code>YOUTUBE_COOKIES_FILE</code> и файл существует — используется он; иначе — файл из админки (<code>secrets/youtube_cookies.txt</code>).<br/>
-Прокси только в .env: <code>YOUTUBE_PROXY</code>.
+<b>Приоритет yt-dlp:</b> поле <code>youtube_cookies_file</code> в блоке «Runtime» (если путь непустой и файл есть) → иначе <code>YOUTUBE_COOKIES_FILE</code> в .env → иначе загрузка ниже.<br/>
+<b>Прокси:</b> поле <code>youtube_proxy</code> в «Runtime» (если непусто) → иначе <code>YOUTUBE_PROXY</code> в .env. Celery подхватывает при следующей задаче без перезапуска.
 </p>
 {% if youtube_err %}<div class="alert-ok" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--red);margin-bottom:12px;font-size:13px">{{ youtube_err_msg }}</div>{% endif %}
 {% if youtube_ok %}<div class="alert-ok" style="margin-bottom:12px">Cookies сохранены. Celery подхватит при следующей задаче YouTube.</div>{% endif %}
 {% if youtube_del %}<div class="alert-ok" style="margin-bottom:12px">Файл cookies из админки удалён.</div>{% endif %}
 {% if youtube_admin_exists %}<p class="mut mono" style="font-size:12px;margin-bottom:8px">Файл из админки: {{ youtube_admin_size }} байт</p>{% endif %}
-{% if youtube_priority == 'env' %}<p class="mut" style="font-size:12px;margin-bottom:12px">Сейчас yt-dlp берёт cookies из <b>.env</b> (<code>YOUTUBE_COOKIES_FILE</code>).</p>{% elif youtube_priority == 'admin' %}<p class="mut" style="font-size:12px;margin-bottom:12px">Сейчас yt-dlp берёт cookies из <b>админки</b>.</p>{% else %}<p class="mut" style="font-size:12px;margin-bottom:12px">Cookies не заданы (ни .env, ни загрузка).</p>{% endif %}
+{% if youtube_cookie_source == 'db' %}<p class="mut" style="font-size:12px;margin-bottom:8px">Cookies: сейчас возьмётся путь из <b>настроек БД</b> (<code>youtube_cookies_file</code>).</p>
+{% elif youtube_cookie_source == 'env' %}<p class="mut" style="font-size:12px;margin-bottom:8px">Cookies: сейчас — из <b>.env</b> (<code>YOUTUBE_COOKIES_FILE</code>).</p>
+{% elif youtube_cookie_source == 'admin' %}<p class="mut" style="font-size:12px;margin-bottom:8px">Cookies: сейчас — <b>файл, загруженный ниже</b> (или путь по умолчанию <code>secrets/youtube_cookies.txt</code>).</p>
+{% else %}<p class="mut" style="font-size:12px;margin-bottom:8px">Cookies: <b>не заданы</b> (ни БД, ни .env, ни файл загрузки).</p>{% endif %}
+{% if youtube_proxy_source == 'db' %}<p class="mut" style="font-size:12px;margin-bottom:12px">Прокси: из <b>настроек БД</b> (<code>youtube_proxy</code>).</p>
+{% elif youtube_proxy_source == 'env' %}<p class="mut" style="font-size:12px;margin-bottom:12px">Прокси: из <b>.env</b> (<code>YOUTUBE_PROXY</code>).</p>
+{% else %}<p class="mut" style="font-size:12px;margin-bottom:12px">Прокси: <b>не задан</b>.</p>{% endif %}
 <form method="post" action="/admin/youtube/cookies" enctype="multipart/form-data" style="margin-bottom:12px">
 <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/>
 <div class="fg"><label>Файл cookies.txt</label><input type="file" name="cookies_file" accept=".txt,text/plain" required/></div>

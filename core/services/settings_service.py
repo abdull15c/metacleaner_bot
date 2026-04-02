@@ -15,6 +15,14 @@ DEFAULTS = {
     "processing_enabled":       ("true",  "Enable/disable processing globally"),
     "maintenance_mode":         ("false", "Maintenance mode"),
     "youtube_enabled":          ("true",  "Enable YouTube URL processing"),
+    "youtube_cookies_file": (
+        "secrets/youtube_cookies.txt",
+        "Путь к Netscape cookies для yt-dlp (от корня проекта). Очистить поле — только .env и загрузка ниже.",
+    ),
+    "youtube_proxy": (
+        "",
+        "Прокси для yt-dlp. Пусто — из .env (YOUTUBE_PROXY).",
+    ),
 }
 
 # Ключи, разрешённые к изменению через POST /admin/settings (защита от лишних полей формы).

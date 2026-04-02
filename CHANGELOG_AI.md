@@ -91,6 +91,12 @@
 
 - `scripts/reset_admin_password.py` — интерактивный сброс пароля по логину (тот же `hash_password`, что у входа).
 
+## 2026-04-02 — YouTube: cookies/прокси из админки (БД)
+
+- В `DEFAULTS`: `youtube_cookies_file`, `youtube_proxy`; воркер читает их через `resolve_youtube_dl_cookies_and_proxy()` при каждой задаче (приоритет над `.env`, затем фоллбэк как раньше).
+- Подсказки на странице настроек: откуда возьмутся cookies и прокси.
+- `python3 scripts/seed_settings.py` — добавляет новые ключи в существующую БД.
+
 ## 2026-04-02 — YouTube: пути cookies для Celery
 
 - `get_effective_youtube_cookies_path` и `resolve_admin_cookies_path`: относительные пути от `settings.project_root` (рядом с `core/`), не от `cwd`.

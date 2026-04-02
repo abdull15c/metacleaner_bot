@@ -1,5 +1,7 @@
 import asyncio, json, logging, subprocess, uuid
 from pathlib import Path
+from typing import Optional
+
 from core.config import settings
 from core.exceptions import DownloadError, InvalidYouTubeURLError
 from workers.celery_app import app
@@ -7,33 +9,30 @@ from workers.celery_app import app
 logger = logging.getLogger(__name__)
 
 
-def _yt_dlp_extra_args():
-    """Cookies / proxy — DEPLOY.md; cookies из .env или из админки (пути от project_root)."""
-    from core.youtube_cookies import get_effective_youtube_cookies_path
-
-    args = []
-    eff = get_effective_youtube_cookies_path()
-    if eff:
-        args.extend(["--cookies", str(eff)])
+def _yt_dlp_extra_args(cookies_path: Optional[Path], proxy: Optional[str]) -> list:
+    """Собрать --cookies / --proxy (значения из resolve_youtube_dl_cookies_and_proxy)."""
+    args: list = []
+    if cookies_path:
+        args.extend(["--cookies", str(cookies_path)])
     elif settings.youtube_cookies_file:
         logger.warning(
-            "YOUTUBE_COOKIES_FILE set but file missing (resolved from project root): %s",
+            "YOUTUBE_COOKIES_FILE in .env but file missing (project root): %s",
             settings.youtube_cookies_file,
         )
-    if settings.youtube_proxy:
-        args.extend(["--proxy", settings.youtube_proxy])
+    if proxy:
+        args.extend(["--proxy", proxy])
     logger.info(
         "yt-dlp YouTube: cookies=%s proxy=%s",
-        str(eff) if eff else "(none)",
-        "on" if settings.youtube_proxy else "off",
+        str(cookies_path) if cookies_path else "(none)",
+        "on" if proxy else "off",
     )
     return args
 
 
-def download_youtube_video(url, output_dir):
+def download_youtube_video(url, output_dir, cookies_path: Optional[Path], proxy: Optional[str]):
     name = str(uuid.uuid4())
     template = str(output_dir / f"{name}.%(ext)s")
-    extra = _yt_dlp_extra_args()
+    extra = _yt_dlp_extra_args(cookies_path, proxy)
     info_r = subprocess.run(
         ["yt-dlp", *extra, "--dump-json", "--no-playlist", "--quiet", url],
         capture_output=True, text=True, timeout=30,
@@ -82,8 +81,13 @@ def download_youtube_task(self, job_uuid):
             await session.commit()
             job = await svc.get_by_uuid(job_uuid)
             try:
+                from core.youtube_cookies import resolve_youtube_dl_cookies_and_proxy
+
                 settings.temp_upload_dir.mkdir(parents=True, exist_ok=True)
-                path, title = download_youtube_video(job.source_url, settings.temp_upload_dir)
+                cookies_path, proxy = await resolve_youtube_dl_cookies_and_proxy()
+                path, title = download_youtube_video(
+                    job.source_url, settings.temp_upload_dir, cookies_path, proxy
+                )
                 size = Path(path).stat().st_size
                 if size > settings.max_file_size_bytes:
                     Path(path).unlink(missing_ok=True)

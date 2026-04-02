@@ -236,22 +236,26 @@ async def errors_page(request: Request, page: int = 1, session: AsyncSession = D
     return templates.TemplateResponse("errors.html", {"request": request, "admin": admin, "active_page": "errors", "logs": list(r.scalars().all()), "page": page})
 
 
-def _youtube_admin_template_ctx(request: Request):
+async def _youtube_admin_template_ctx(request: Request, session: AsyncSession):
     from pathlib import Path
 
     from core.config import settings as cfg
-    from core.youtube_cookies import resolve_admin_cookies_path
+    from core.services.settings_service import SettingsService
+    from core.youtube_cookies import preview_youtube_dl_sources, resolve_admin_cookies_path
+
+    ss = SettingsService(session)
+    db_cf = await ss.get("youtube_cookies_file", "")
+    db_px = await ss.get("youtube_proxy", "")
+    cookie_src, proxy_src = preview_youtube_dl_sources(db_cf, db_px)
 
     ap = resolve_admin_cookies_path()
     admin_exists = ap.is_file()
     admin_size = ap.stat().st_size if admin_exists else 0
     env_p = cfg.youtube_cookies_file
-    env_ok = bool(env_p and Path(env_p).is_file())
-    priority = None
-    if env_ok:
-        priority = "env"
-    elif admin_exists:
-        priority = "admin"
+    env_ep = Path(env_p) if env_p else None
+    if env_ep and not env_ep.is_absolute():
+        env_ep = cfg.project_root / env_ep
+    env_ok = bool(env_ep and env_ep.is_file())
     err_map = {
         "nofile": "Файл не выбран.",
         "invalid": "Некорректный файл: нужен Netscape cookies с youtube.com.",
@@ -261,7 +265,9 @@ def _youtube_admin_template_ctx(request: Request):
     return {
         "youtube_admin_exists": admin_exists,
         "youtube_admin_size": admin_size,
-        "youtube_priority": priority,
+        "youtube_cookie_source": cookie_src,
+        "youtube_proxy_source": proxy_src,
+        "youtube_env_cookies_ok": env_ok,
         "youtube_ok": request.query_params.get("youtube_ok"),
         "youtube_del": request.query_params.get("youtube_del"),
         "youtube_err": err,
@@ -277,7 +283,7 @@ async def settings_page(request: Request, session: AsyncSession = Depends(get_db
         "settings": await SettingsService(session).get_all_with_meta(),
         "saved": request.query_params.get("saved"),
     }
-    ctx.update(_youtube_admin_template_ctx(request))
+    ctx.update(await _youtube_admin_template_ctx(request, session))
     return templates.TemplateResponse("settings.html", ctx)
 
 
