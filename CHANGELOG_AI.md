@@ -63,3 +63,26 @@
 ### Известные ограничения
 
 - Лимит логина админки — на процесс; глобально при нескольких инстансах — внешний лимитер (см. DEPLOY.md).
+
+---
+
+## 2026-04-02 (доп.) — YouTube с VPS
+
+- В конфиге: `YOUTUBE_COOKIES_FILE`, `YOUTUBE_PROXY` для вызовов `yt-dlp` (обход 429 / «Sign in to confirm…» с датацентровых IP).
+- В `DEPLOY.md` — раздел с пошаговыми рекомендациями.
+
+## 2026-04-02 (доп.) — systemd
+
+- `deploy/systemd/`: `metacleaner-admin.service`, `metacleaner-worker.service`, `metacleaner-bot.service` (пути `/root/metacleaner_bot`, venv `.venv`).
+- В `DEPLOY.md` — инструкция по установке, `sed` для `YOUTUBE_ENABLED=false`, заметка про Redis из Docker и запуск не от root.
+
+## 2026-04-02 (доп.) — порт админки из .env
+
+- `ADMIN_HOST`, `ADMIN_PORT` (1–65535); запуск `python -m admin` (`admin/__main__.py`), systemd без захардкоженного порта.
+- В `.env.example`, README, DEPLOY, `create_admin.py` — учёт порта.
+
+## 2026-04-02 (доп.) — YouTube cookies из админки
+
+- Загрузка Netscape `cookies.txt` в **Настройки** админки → `secrets/youtube_cookies.txt` (`core/youtube_cookies.py`).
+- Приоритет для yt-dlp: `YOUTUBE_COOKIES_FILE` в .env, иначе файл из админки; прокси по-прежнему `YOUTUBE_PROXY` в .env.
+- `YOUTUBE_COOKIES_ADMIN_PATH` в конфиге для смены пути; `secrets/*` в `.gitignore`.

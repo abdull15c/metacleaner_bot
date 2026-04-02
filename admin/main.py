@@ -236,14 +236,49 @@ async def errors_page(request: Request, page: int = 1, session: AsyncSession = D
     return templates.TemplateResponse("errors.html", {"request": request, "admin": admin, "active_page": "errors", "logs": list(r.scalars().all()), "page": page})
 
 
+def _youtube_admin_template_ctx(request: Request):
+    from pathlib import Path
+
+    from core.config import settings as cfg
+    from core.youtube_cookies import resolve_admin_cookies_path
+
+    ap = resolve_admin_cookies_path()
+    admin_exists = ap.is_file()
+    admin_size = ap.stat().st_size if admin_exists else 0
+    env_p = cfg.youtube_cookies_file
+    env_ok = bool(env_p and Path(env_p).is_file())
+    priority = None
+    if env_ok:
+        priority = "env"
+    elif admin_exists:
+        priority = "admin"
+    err_map = {
+        "nofile": "Файл не выбран.",
+        "invalid": "Некорректный файл: нужен Netscape cookies с youtube.com.",
+        "io": "Не удалось записать файл.",
+    }
+    err = request.query_params.get("youtube_err")
+    return {
+        "youtube_admin_exists": admin_exists,
+        "youtube_admin_size": admin_size,
+        "youtube_priority": priority,
+        "youtube_ok": request.query_params.get("youtube_ok"),
+        "youtube_del": request.query_params.get("youtube_del"),
+        "youtube_err": err,
+        "youtube_err_msg": err_map.get(err) if err else None,
+    }
+
+
 @app.get("/admin/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
     from core.services.settings_service import SettingsService
-    return templates.TemplateResponse("settings.html", {
+    ctx = {
         "request": request, "admin": admin, "active_page": "settings",
         "settings": await SettingsService(session).get_all_with_meta(),
         "saved": request.query_params.get("saved"),
-    })
+    }
+    ctx.update(_youtube_admin_template_ctx(request))
+    return templates.TemplateResponse("settings.html", ctx)
 
 
 @app.post("/admin/settings")
@@ -260,6 +295,35 @@ async def update_settings(request: Request, session: AsyncSession = Depends(get_
         await svc.set(k, v, admin_id=admin.id)
     await session.commit()
     return RedirectResponse("/admin/settings?saved=1", status_code=303)
+
+
+@app.post("/admin/youtube/cookies")
+async def admin_upload_youtube_cookies(request: Request, admin=Depends(require_admin)):
+    form = await request.form()
+    verify_csrf(request, form)
+    uf = form.get("cookies_file")
+    if uf is None or not hasattr(uf, "read"):
+        return RedirectResponse("/admin/settings?youtube_err=nofile", status_code=303)
+    try:
+        raw = await uf.read()
+        from core.youtube_cookies import save_admin_cookies
+
+        save_admin_cookies(raw)
+    except ValueError:
+        return RedirectResponse("/admin/settings?youtube_err=invalid", status_code=303)
+    except OSError:
+        return RedirectResponse("/admin/settings?youtube_err=io", status_code=303)
+    return RedirectResponse("/admin/settings?youtube_ok=1", status_code=303)
+
+
+@app.post("/admin/youtube/cookies/delete")
+async def admin_delete_youtube_cookies(request: Request, admin=Depends(require_admin)):
+    form = await request.form()
+    verify_csrf(request, form)
+    from core.youtube_cookies import delete_admin_cookies
+
+    delete_admin_cookies()
+    return RedirectResponse("/admin/settings?youtube_del=1", status_code=303)
 
 
 @app.post("/admin/cleanup/run")

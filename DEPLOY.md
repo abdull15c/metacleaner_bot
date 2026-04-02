@@ -65,8 +65,53 @@ python scripts/create_admin.py
 1. **Бот:** `python -m bot.main`
 2. **Celery:** `celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo`  
    Для **нескольких воркеров** на одной машине с Postgres можно попробовать `--pool=prefork -c 2` (нагрузите и проверьте пул БД).
-3. **Админка:** `uvicorn admin.main:app --host 127.0.0.1 --port 8000`  
-   Снаружи — Nginx с TLS и прокси на `127.0.0.1:8000`.
+3. **Админка:** `python -m admin` — хост и порт из `.env` (`ADMIN_HOST`, `ADMIN_PORT`, по умолчанию `127.0.0.1:8000`). На сервере часто `ADMIN_HOST=0.0.0.0` и **уникальный** `ADMIN_PORT` (например `8456`), чтобы не конфликтовать с другими сервисами.  
+   Снаружи — Nginx с TLS и `proxy_pass` на тот же порт, что в `ADMIN_PORT`.
+
+### systemd (юниты в репозитории)
+
+В каталоге `deploy/systemd/` лежат три unit-файла под типичный VPS:
+
+| Предположение | Значение |
+|---------------|----------|
+| Клон репозитория | `/root/metacleaner_bot` |
+| Виртуальное окружение | `/root/metacleaner_bot/.venv` |
+| Пользователь | `root` (для продакшена лучше отдельный пользователь — см. ниже) |
+
+Если venv у вас называется `venv`, а не `.venv`, отредактируйте `ExecStart` в каждом файле или переименуйте каталог.
+
+Установка:
+
+```bash
+cd /root/metacleaner_bot
+sudo cp deploy/systemd/metacleaner-admin.service /etc/systemd/system/
+sudo cp deploy/systemd/metacleaner-worker.service /etc/systemd/system/
+sudo cp deploy/systemd/metacleaner-bot.service /etc/systemd/system/
+
+sudo systemctl daemon-reload
+sudo systemctl enable metacleaner-admin metacleaner-worker metacleaner-bot
+sudo systemctl start metacleaner-admin metacleaner-worker metacleaner-bot
+```
+
+Проверка и логи:
+
+```bash
+sudo systemctl status metacleaner-admin metacleaner-worker metacleaner-bot
+journalctl -u metacleaner-admin -f
+journalctl -u metacleaner-worker -f
+journalctl -u metacleaner-bot -f
+```
+
+Юниты ждут `redis.service` (`Wants=` / `After=`). Если Redis из Docker без systemd-юнита — уберите `After=redis.service` / `Wants=redis.service` или добавьте свой target.
+
+**YouTube с VPS** часто даёт 429 — проще отключить режим ссылок в `.env` и перезапустить сервисы:
+
+```bash
+sed -i 's/^YOUTUBE_ENABLED=.*/YOUTUBE_ENABLED=false/' /root/metacleaner_bot/.env
+sudo systemctl restart metacleaner-admin metacleaner-worker metacleaner-bot
+```
+
+**Не под root:** скопируйте те же шаблоны, замените `WorkingDirectory` и пути к `python` на домашний каталог пользователя (например `/home/metacleaner/metacleaner_bot`), добавьте в `[Service]` строки `User=metacleaner` и `Group=metacleaner`, выставьте права на каталог проекта и `.env` этому пользователю.
 
 ### Nginx: лимит логина (несколько воркеров Uvicorn)
 
@@ -76,7 +121,7 @@ In-process лимит `/admin/login` не делится между воркер
 limit_req_zone $binary_remote_addr zone=admin_login:10m rate=10r/m;
 location /admin/login {
     limit_req zone=admin_login burst=5 nodelay;
-    proxy_pass http://127.0.0.1:8000;
+    proxy_pass http://127.0.0.1:8456;  # порт = ADMIN_PORT в .env на сервере
 }
 ```
 
@@ -92,7 +137,28 @@ chmod +x scripts/backup_db.sh
 
 Архивы появятся в `backups/*.sql.gz`. Повесьте на cron (например, ежедневно).
 
-## 7. Тесты
+## 7. YouTube на VPS (HTTP 429, «Sign in to confirm you’re not a bot»)
+
+YouTube часто режет **IP датацентров** и без «человеческой» сессии отвечает 429 или страницей входа. Это не баг бота, а политика доступа.
+
+**Практично, по приоритету:**
+
+1. **Обновить yt-dlp** на сервере (часто помогает на несколько недель):
+   ```bash
+   pip install -U yt-dlp
+   ```
+2. **Cookies из браузера** (Netscape): на ПК залогиниться в YouTube и экспортировать cookies (расширения вроде «Get cookies.txt LOCALLY»).
+   - **Удобно:** админка → **Настройки** → блок **«YouTube — cookies»** → загрузить файл. Он сохранится в `secrets/youtube_cookies.txt` (каталог в `.gitignore`). Перезапуск Celery не обязателен.
+   - **Либо** путь в `.env`: `YOUTUBE_COOKIES_FILE=/path/to/cookies.txt` — если файл существует, он **имеет приоритет** над загрузкой из админки.
+   Cookies со временем протухают — обновляйте. **Не коммитьте** cookies в git.
+3. **Резидентный HTTP(S) прокси** (домашний IP или платный residential), если cookies недостаточно:
+   ```env
+   YOUTUBE_PROXY=http://user:pass@host:port
+   ```
+4. **Выключить YouTube в боте** и оставить только загрузку файлов: в админке `youtube_enabled=false` или в настройках БД — пользователи скачивают ролик у себя и шлют файлом.
+5. Юридически и по ToS YouTube: режим ссылки в боте — только для контента, на который у вас есть права (как у вас уже в тексте согласия).
+
+## 8. Тесты
 
 ```bash
 pip install -r requirements.txt
@@ -103,7 +169,7 @@ python -m pytest tests/ -v
 
 Маркер `integration` стоит на `tests/test_integration_deploy.py`; обычный прогон `pytest tests/` уже включает эти тесты.
 
-## 8. Чеклист перед выкладкой
+## 9. Чеклист перед выкладкой
 
 - [ ] `alembic upgrade head` на прод-БД  
 - [ ] Секреты только в `.env`, не в git  

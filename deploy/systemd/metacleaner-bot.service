@@ -1,0 +1,15 @@
+[Unit]
+Description=MetaCleaner Telegram Bot
+After=network.target redis.service metacleaner-worker.service
+Wants=redis.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/metacleaner_bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/metacleaner_bot/.venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

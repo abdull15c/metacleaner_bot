@@ -32,8 +32,8 @@ python -m bot.main
 # Окно 2 — воркер:
 celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo
 
-# Окно 3 — панель:
-uvicorn admin.main:app --host 127.0.0.1 --port 8000 --reload
+# Окно 3 — панель (порт и хост в .env: ADMIN_HOST, ADMIN_PORT):
+python -m admin
 ```
 
 Подробный чеклист деплоя (VPS, Docker, Postgres, Nginx, бэкапы): [DEPLOY.md](DEPLOY.md).
@@ -47,7 +47,7 @@ uvicorn admin.main:app --host 127.0.0.1 --port 8000 --reload
 
 ## Панель администратора
 
-http://127.0.0.1:8000/admin
+http://127.0.0.1:8000/admin (порт по умолчанию 8000, см. `ADMIN_PORT` в `.env`)
 
 ## Тесты
 

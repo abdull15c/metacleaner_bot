@@ -1,0 +1,15 @@
+[Unit]
+Description=MetaCleaner Celery Worker
+After=network.target redis.service
+Wants=redis.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/metacleaner_bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/metacleaner_bot/.venv/bin/python -m celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

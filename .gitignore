@@ -19,3 +19,5 @@ htmlcov/
 celerybeat-schedule
 celerybeat.pid
 backups/
+secrets/*
+!secrets/.gitkeep

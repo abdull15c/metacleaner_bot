@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     database_max_overflow: int = 10
     redis_url: str = "redis://localhost:6379/0"
     admin_host: str = "127.0.0.1"
-    admin_port: int = 8000
+    admin_port: int = Field(default=8000, ge=1, le=65535)
     admin_session_cookie: str = "metacleaner_admin"
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     processing_enabled: bool = True
     maintenance_mode: bool = False
     youtube_enabled: bool = True
+    youtube_cookies_file: Optional[Path] = None
+    youtube_cookies_admin_path: Path = Path("secrets/youtube_cookies.txt")
+    youtube_proxy: Optional[str] = None
     environment: str = "development"
     debug: bool = False
     log_level: str = "INFO"
@@ -69,6 +72,10 @@ class Settings(BaseSettings):
     def ensure_dirs(self):
         for d in [self.temp_upload_dir, self.temp_processed_dir, self.logs_dir]:
             d.mkdir(parents=True, exist_ok=True)
+        secrets_parent = Path(self.youtube_cookies_admin_path).parent
+        if not secrets_parent.is_absolute():
+            secrets_parent = Path.cwd() / secrets_parent
+        secrets_parent.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache()

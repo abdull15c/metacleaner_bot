@@ -29,5 +29,26 @@
 </div></div>
 <div class="card"><div class="ch">Cleanup</div>
 <form method="post" action="/admin/cleanup/run"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/><button class="btn bh wf sm">🗑 Запустить</button></form>
+</div>
+<div class="card"><div class="ch">YouTube — cookies (Netscape)</div>
+<p class="mut" style="font-size:12px;margin-bottom:14px;line-height:1.5">
+Файл <code>cookies.txt</code> из браузера (расширение вроде «Get cookies.txt LOCALLY»). Макс. 512 КБ.<br/>
+<b>Приоритет:</b> если в .env задан <code>YOUTUBE_COOKIES_FILE</code> и файл существует — используется он; иначе — файл из админки (<code>secrets/youtube_cookies.txt</code>).<br/>
+Прокси только в .env: <code>YOUTUBE_PROXY</code>.
+</p>
+{% if youtube_err %}<div class="alert-ok" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.3);color:var(--red);margin-bottom:12px;font-size:13px">{{ youtube_err_msg }}</div>{% endif %}
+{% if youtube_ok %}<div class="alert-ok" style="margin-bottom:12px">Cookies сохранены. Celery подхватит при следующей задаче YouTube.</div>{% endif %}
+{% if youtube_del %}<div class="alert-ok" style="margin-bottom:12px">Файл cookies из админки удалён.</div>{% endif %}
+{% if youtube_admin_exists %}<p class="mut mono" style="font-size:12px;margin-bottom:8px">Файл из админки: {{ youtube_admin_size }} байт</p>{% endif %}
+{% if youtube_priority == 'env' %}<p class="mut" style="font-size:12px;margin-bottom:12px">Сейчас yt-dlp берёт cookies из <b>.env</b> (<code>YOUTUBE_COOKIES_FILE</code>).</p>{% elif youtube_priority == 'admin' %}<p class="mut" style="font-size:12px;margin-bottom:12px">Сейчас yt-dlp берёт cookies из <b>админки</b>.</p>{% else %}<p class="mut" style="font-size:12px;margin-bottom:12px">Cookies не заданы (ни .env, ни загрузка).</p>{% endif %}
+<form method="post" action="/admin/youtube/cookies" enctype="multipart/form-data" style="margin-bottom:12px">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/>
+<div class="fg"><label>Файл cookies.txt</label><input type="file" name="cookies_file" accept=".txt,text/plain" required/></div>
+<button type="submit" class="btn bp sm">Загрузить</button>
+</form>
+<form method="post" action="/admin/youtube/cookies/delete" onsubmit="return confirm('Удалить cookies, сохранённые из админки?');">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"/>
+<button type="submit" class="btn br sm" {% if not youtube_admin_exists %}disabled style="opacity:.5"{% endif %}>Удалить файл из админки</button>
+</form>
 </div></div></div>
 {% endblock %}

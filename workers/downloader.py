@@ -7,19 +7,40 @@ from workers.celery_app import app
 logger = logging.getLogger(__name__)
 
 
+def _yt_dlp_extra_args():
+    """Cookies / proxy — см. DEPLOY.md; cookies из .env или из админки."""
+    from core.youtube_cookies import get_effective_youtube_cookies_path
+
+    args = []
+    eff = get_effective_youtube_cookies_path()
+    if eff:
+        args.extend(["--cookies", str(eff)])
+    elif settings.youtube_cookies_file:
+        logger.warning("YOUTUBE_COOKIES_FILE set but file missing: %s", settings.youtube_cookies_file)
+    if settings.youtube_proxy:
+        args.extend(["--proxy", settings.youtube_proxy])
+    return args
+
+
 def download_youtube_video(url, output_dir):
     name = str(uuid.uuid4())
     template = str(output_dir / f"{name}.%(ext)s")
-    info_r = subprocess.run(["yt-dlp","--dump-json","--no-playlist","--quiet",url],
-                            capture_output=True, text=True, timeout=30)
+    extra = _yt_dlp_extra_args()
+    info_r = subprocess.run(
+        ["yt-dlp", *extra, "--dump-json", "--no-playlist", "--quiet", url],
+        capture_output=True, text=True, timeout=30,
+    )
     if info_r.returncode != 0: raise InvalidYouTubeURLError(f"Cannot access: {info_r.stderr[:200]}")
     try: title = json.loads(info_r.stdout).get("title","video")
     except: title = "video"
     dl_r = subprocess.run(
-        ["yt-dlp","--no-playlist","--format",
-         "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]",
-         "--merge-output-format","mp4","--output",template,"--no-progress","--quiet",url],
-        capture_output=True, text=True, timeout=600)
+        [
+            "yt-dlp", *extra, "--no-playlist", "--format",
+            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]",
+            "--merge-output-format", "mp4", "--output", template, "--no-progress", "--quiet", url,
+        ],
+        capture_output=True, text=True, timeout=600,
+    )
     if dl_r.returncode != 0: raise DownloadError(f"yt-dlp failed: {dl_r.stderr[:300]}")
     files = list(output_dir.glob(f"{name}.*"))
     if not files: raise DownloadError("Downloaded file not found")
