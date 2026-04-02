@@ -67,6 +67,7 @@ async def main():
         AntiFloodMiddleware(cooldown_seconds=settings.user_cooldown_seconds, redis=redis_client),
     )
     dp.message.middleware(AuthMiddleware())
+    dp.callback_query.middleware(AuthMiddleware())
     dp.include_router(errors.router)
     dp.include_router(start.router)
     dp.include_router(status.router)

@@ -283,12 +283,14 @@ async def settings_page(request: Request, session: AsyncSession = Depends(get_db
 
 @app.post("/admin/settings")
 async def update_settings(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
-    from core.services.settings_service import SettingsService
+    from core.services.settings_service import ALLOWED_SETTING_KEYS, SettingsService
     form = await request.form()
     verify_csrf(request, form)
     svc = SettingsService(session)
     for k, v in form.items():
         if k.startswith("_") or k == "csrf_token":
+            continue
+        if k not in ALLOWED_SETTING_KEYS:
             continue
         if v.lower() in ("true","on","yes","1"): v = "true"
         elif v.lower() in ("false","off","no","0"): v = "false"

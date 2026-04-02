@@ -6,7 +6,7 @@ from bot.keyboards.youtube_consent import youtube_consent_keyboard
 from bot.states.youtube import YouTubeConsentStates
 from core.config import settings
 from core.database import get_db_session
-from core.models import JobStatus, SourceType
+from core.models import JobStatus, SourceType, User
 from core.services.job_service import JobService
 from core.services.log_service import LogService
 from core.services.settings_service import SettingsService
@@ -29,7 +29,7 @@ CONSENT = """
 
 
 @router.message(F.text.regexp(r"https?://").as_("url"))
-async def handle_url(message: Message, state: FSMContext):
+async def handle_url(message: Message, state: FSMContext, db_user: User):
     text = message.text or ""
     if not YT_RE.search(text):
         await message.answer("❌ Ссылка не распознана. Отправьте файл или YouTube-ссылку."); return
@@ -40,9 +40,13 @@ async def handle_url(message: Message, state: FSMContext):
         if not await ss.get("processing_enabled", True):
             await message.answer("⚠️ Обработка приостановлена. Попробуйте позже."); return
         us = UserService(session)
-        user, _ = await us.get_or_create(telegram_id=message.from_user.id,
-                                          username=message.from_user.username,
-                                          first_name=message.from_user.first_name)
+        user = await session.get(User, db_user.id)
+        if not user:
+            user, _ = await us.get_or_create(
+                telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+            )
         active = await JobService(session).get_active_job_for_user(user.id)
         if active:
             await message.answer(f"⏳ У вас уже обрабатывается задача <code>#{active.uuid[:8]}</code>.\n/cancel для отмены.", parse_mode="HTML"); return
@@ -52,7 +56,7 @@ async def handle_url(message: Message, state: FSMContext):
 
 
 @router.callback_query(YouTubeConsentStates.waiting_for_consent, F.data == "yt_consent:yes")
-async def consent_yes(callback: CallbackQuery, state: FSMContext):
+async def consent_yes(callback: CallbackQuery, state: FSMContext, db_user: User):
     data = await state.get_data(); url = data.get("youtube_url", "")
     await state.clear()
     await callback.message.edit_reply_markup(reply_markup=None)
@@ -62,7 +66,9 @@ async def consent_yes(callback: CallbackQuery, state: FSMContext):
         await LogService(session).info("youtube", "Consent granted", user_id=tg.id, url=url)
         ss = SettingsService(session); us = UserService(session)
         max_daily = int(await ss.get("max_daily_jobs_per_user", settings.max_daily_jobs_per_user))
-        user, _ = await us.get_or_create(telegram_id=tg.id, username=tg.username, first_name=tg.first_name)
+        user = await session.get(User, db_user.id)
+        if not user:
+            user, _ = await us.get_or_create(telegram_id=tg.id, username=tg.username, first_name=tg.first_name)
         if not await us.increment_daily_count(user, max_daily):
             await callback.message.answer(
                 f"⚠️ Дневной лимит задач исчерпан (<b>{max_daily}</b>/день).", parse_mode="HTML")

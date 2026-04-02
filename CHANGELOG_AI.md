@@ -90,3 +90,10 @@
 ## 2026-04-02 (доп.) — сброс пароля админа
 
 - `scripts/reset_admin_password.py` — интерактивный сброс пароля по логину (тот же `hash_password`, что у входа).
+
+## 2026-04-02 (аудит) — настройки, константы, middleware
+
+- POST `/admin/settings`: только ключи из `ALLOWED_SETTING_KEYS` (= `DEFAULTS` в `SettingsService`).
+- `core/constants.py`: `SUPPORTED_VIDEO_EXTENSIONS`; бот и `video_processor` используют одну константу.
+- `AuthMiddleware` на `callback_query` (бан/ТО + `db_user`); upload/youtube подставляют пользователя через `session.get(User, db_user.id)` вместо повторного `get_or_create`.
+- Удалены неиспользуемые `aiofiles`, `tenacity` из `requirements.txt`.

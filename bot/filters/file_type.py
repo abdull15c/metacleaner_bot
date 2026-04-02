@@ -1,7 +1,9 @@
 from aiogram.filters import BaseFilter
 from aiogram.types import Message
 
-SUPPORTED_EXTENSIONS = {".mp4",".mkv",".mov",".avi",".webm",".m4v",".flv",".ts",".wmv",".3gp"}
+from core.constants import SUPPORTED_VIDEO_EXTENSIONS
+
+SUPPORTED_EXTENSIONS = SUPPORTED_VIDEO_EXTENSIONS
 
 
 class VideoFileFilter(BaseFilter):

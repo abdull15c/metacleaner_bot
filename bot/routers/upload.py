@@ -5,7 +5,7 @@ from aiogram.types import Message
 from bot.filters.file_type import VideoFileFilter, UnsupportedFileFilter
 from core.config import settings
 from core.database import get_db_session
-from core.models import JobStatus, SourceType
+from core.models import JobStatus, SourceType, User
 from core.services.job_service import JobService
 from core.services.settings_service import SettingsService
 from core.services.user_service import UserService
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.message(VideoFileFilter())
-async def handle_video(message: Message, bot: Bot):
+async def handle_video(message: Message, bot: Bot, db_user: User):
     tg = message.from_user
     async with get_db_session() as session:
         ss = SettingsService(session)
@@ -25,7 +25,9 @@ async def handle_video(message: Message, bot: Bot):
         max_daily = int(await ss.get("max_daily_jobs_per_user", settings.max_daily_jobs_per_user))
         max_bytes = max_mb * 1024 * 1024
         us = UserService(session)
-        user, _ = await us.get_or_create(telegram_id=tg.id, username=tg.username, first_name=tg.first_name)
+        user = await session.get(User, db_user.id)
+        if not user:
+            user, _ = await us.get_or_create(telegram_id=tg.id, username=tg.username, first_name=tg.first_name)
         if message.document:
             fid = message.document.file_id
             fname = message.document.file_name or "video.mp4"

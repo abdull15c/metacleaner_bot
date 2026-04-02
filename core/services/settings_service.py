@@ -17,6 +17,9 @@ DEFAULTS = {
     "youtube_enabled":          ("true",  "Enable YouTube URL processing"),
 }
 
+# Ключи, разрешённые к изменению через POST /admin/settings (защита от лишних полей формы).
+ALLOWED_SETTING_KEYS = frozenset(DEFAULTS.keys())
+
 
 class SettingsService:
     def __init__(self, session: AsyncSession):

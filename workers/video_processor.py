@@ -1,11 +1,12 @@
 import asyncio, json, logging, subprocess, uuid
 from pathlib import Path
 from core.config import settings
+from core.constants import SUPPORTED_VIDEO_EXTENSIONS
 from core.exceptions import FFmpegError, FFmpegNotFoundError
 from workers.celery_app import app
 
 logger = logging.getLogger(__name__)
-SUPPORTED_EXTENSIONS = {".mp4",".mkv",".mov",".avi",".webm",".m4v",".flv",".ts",".wmv",".3gp"}
+SUPPORTED_EXTENSIONS = SUPPORTED_VIDEO_EXTENSIONS
 
 
 def check_ffmpeg():
