@@ -75,8 +75,19 @@ async def main():
     dp.include_router(upload.router)
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
-    await dp.start_polling(bot, allowed_updates=["message","callback_query"], drop_pending_updates=True)
-
+    
+    if settings.telegram_webhook_url:
+        log.info(f"Setting webhook to {settings.telegram_webhook_url}")
+        await bot.set_webhook(
+            url=settings.telegram_webhook_url,
+            secret_token=settings.telegram_webhook_secret,
+            allowed_updates=["message","callback_query"],
+            drop_pending_updates=True
+        )
+        log.info("Webhook mode enabled. The bot will receive updates via FastAPI.")
+    else:
+        log.info("Starting long polling mode")
+        await dp.start_polling(bot, allowed_updates=["message","callback_query"], drop_pending_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())

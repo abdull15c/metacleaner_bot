@@ -80,14 +80,31 @@ def process_video_task(self, job_uuid):
                 await svc.update_status(job, JobStatus.failed, "Input file missing")
                 await session.commit()
                 return {"error": "missing"}
+                
+            import redis.asyncio as aioredis
+            from core.services.settings_service import SettingsService
+            ss = SettingsService(session)
+            max_concurrent = int(await ss.get("max_concurrent_jobs", settings.max_concurrent_jobs))
+            r = aioredis.from_url(str(settings.redis_url))
+            active_count = await r.scard("active_processing_jobs")
+            
+            if active_count >= max_concurrent:
+                await session.commit()
+                await r.close()
+                raise self.retry(countdown=10)
+                
             began = await svc.try_begin_video_processing(job_uuid)
             if not began:
                 await session.commit()
+                await r.close()
                 job2 = await svc.get_by_uuid(job_uuid)
                 if job2 and job2.status == JobStatus.processing:
                     return {"status": "duplicate"}
                 return {"status": "skipped"}
+                
+            await r.sadd("active_processing_jobs", job_uuid)
             await session.commit()
+            
             job = await svc.get_by_uuid(job_uuid)
             try:
                 meta_before = extract_metadata(input_path)
@@ -101,16 +118,22 @@ def process_video_task(self, job_uuid):
                 await session.commit()
                 from workers.sender import send_result_task
                 send_result_task.delay(job_uuid)
+                await r.srem("active_processing_jobs", job_uuid)
+                await r.close()
                 return {"status":"ok"}
             except FFmpegError as e:
                 await svc.update_status(job, JobStatus.failed, str(e)); await session.commit()
                 from workers.sender import notify_failure_task
                 notify_failure_task.delay(job_uuid)
+                await r.srem("active_processing_jobs", job_uuid)
+                await r.close()
                 return {"error":str(e)}
             except Exception as e:
                 logger.exception(f"Unexpected error job {job_uuid}")
                 try:
                     await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
                 except: pass
+                await r.srem("active_processing_jobs", job_uuid)
+                await r.close()
                 raise self.retry(exc=e)
     return asyncio.run(_run())

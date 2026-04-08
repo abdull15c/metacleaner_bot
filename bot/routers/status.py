@@ -21,9 +21,31 @@ async def cmd_status(message: Message):
     async with get_db_session() as session:
         user = await UserService(session).get_by_telegram_id(message.from_user.id)
         if not user: await message.answer("У вас ещё нет задач."); return
+        
+        from sqlalchemy import select, func
+        from core.models import Job
+        r = await session.execute(
+            select(func.count(Job.id), func.sum(Job.processed_size_bytes))
+            .where(Job.user_id == user.id)
+            .where(Job.status == JobStatus.done)
+        )
+        total_jobs_ever, total_bytes = r.fetchone()
+        total_jobs_ever = total_jobs_ever or 0
+        total_bytes = total_bytes or 0
+        total_mb = total_bytes / (1024 * 1024)
+        
         jobs = await JobService(session).get_user_jobs(user.id, limit=5)
-        if not jobs: await message.answer("Задач пока нет. Отправьте видеофайл для начала."); return
-        lines = ["📋 <b>Ваши последние задачи:</b>\n"]
+        
+        stats_msg = (
+            f"📈 <b>Ваша статистика:</b>\n"
+            f"Всего файлов обработано: <b>{total_jobs_ever}</b>\n"
+            f"Сэкономлено места: <b>{total_mb:.2f} MB</b> (метаданные удалены)\n"
+            f"Первое использование: <b>{user.created_at.strftime('%Y-%m-%d')}</b>\n\n"
+        )
+        
+        if not jobs: await message.answer(f"{stats_msg}Задач пока нет. Отправьте видеофайл для начала.", parse_mode="HTML"); return
+        
+        lines = [f"{stats_msg}📋 <b>Ваши последние задачи:</b>\n"]
         for j in jobs:
             src = "YouTube" if j.source_type.value == "youtube" else "Файл"
             lines.append(f"{EMOJI.get(j.status,'❓')} <code>#{j.uuid[:8]}</code> — {LABEL.get(j.status,j.status.value)} [{src}]")

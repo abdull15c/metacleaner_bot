@@ -85,9 +85,16 @@ async def consent_yes(callback: CallbackQuery, state: FSMContext, db_user: User)
         async with get_db_session() as session:
             js2 = JobService(session); job2 = await js2.get_by_uuid(job.uuid)
             await js2.set_celery_task_id(job2, task.id); await session.commit()
+        import redis.asyncio as aioredis
+        from core.config import settings
+        r = aioredis.from_url(str(settings.redis_url))
+        queue_len = await r.scard("active_processing_jobs")
+        await r.close()
+        queue_str = f" Задач перед вами: {queue_len}." if queue_len > 0 else ""
+        
         await status_msg.edit_text(
             f"✅ <b>Право подтверждено.</b>\n📋 Задача <code>#{job.uuid[:8]}</code>\n\n"
-            f"🔄 В очереди на скачивание и обработку.", parse_mode="HTML")
+            f"🔄 В очереди на скачивание и обработку.{queue_str}", parse_mode="HTML")
     except Exception as e:
         logger.error(f"Celery dispatch failed: {e}")
         async with get_db_session() as session:

@@ -34,11 +34,33 @@ def cleanup_job_files_task(job_uuid):
 @app.task(name="workers.cleanup.periodic_cleanup_task", queue="cleanup")
 def periodic_cleanup_task():
     async def _run():
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy import update
         from core.database import get_db_session
+        from core.models import Job, JobStatus, SystemLog, LogLevel
         from core.services.job_service import JobService
         from core.services.settings_service import SettingsService
+        from storage.local import storage
+        
         async with get_db_session() as session:
             ttl = int(await SettingsService(session).get("cleanup_ttl_minutes", 30))
+            
+            stuck_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            await session.execute(
+                update(Job)
+                .where(Job.status.in_([JobStatus.pending, JobStatus.processing, JobStatus.downloading]))
+                .where(Job.started_at < stuck_cutoff)
+                .values(status=JobStatus.failed, error_message="Timeout: stuck in queue")
+            )
+            await session.commit()
+            
+            temp_size_mb = storage.temp_total_size_mb()
+            if temp_size_mb > 5000:
+                msg = f"WARNING: temp/ directory size is {temp_size_mb:.1f} MB, which exceeds 5GB threshold."
+                logger.warning(msg)
+                session.add(SystemLog(level=LogLevel.WARNING, source="cleanup", message=msg))
+                await session.commit()
+                
             jobs = await JobService(session).get_jobs_for_cleanup(ttl)
             for job in jobs:
                 _del(job.temp_original_path); _del(job.temp_processed_path)

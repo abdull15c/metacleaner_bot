@@ -32,13 +32,29 @@ class UserService:
         return list(r.scalars().all())
 
     async def increment_daily_count(self, user, max_daily) -> bool:
+        from sqlalchemy import update, literal_column
         now = datetime.now(timezone.utc)
+        
+        # Reset if needed
         if user.daily_reset_at is None or (now - user.daily_reset_at.replace(tzinfo=timezone.utc)) > timedelta(days=1):
             user.daily_job_count = 0
             user.daily_reset_at = now
-        if user.daily_job_count >= max_daily:
+            await self.session.flush()
+
+        stmt = (
+            update(User)
+            .where(User.id == user.id)
+            .where(User.daily_job_count < max_daily)
+            .values(daily_job_count=User.daily_job_count + 1)
+            .returning(User.daily_job_count)
+        )
+        result = await self.session.execute(stmt)
+        updated_count = result.scalar_one_or_none()
+        
+        if updated_count is None:
             return False
-        user.daily_job_count += 1
+            
+        user.daily_job_count = updated_count
         return True
 
     async def rollback_daily_job_increment(self, user) -> None:
@@ -47,6 +63,19 @@ class UserService:
 
     async def get_by_id(self, user_id) -> Optional[User]:
         return await self.session.get(User, user_id)
+
+    async def delete_me(self, telegram_id) -> bool:
+        u = await self.get_by_telegram_id(telegram_id)
+        if not u: return False
+        
+        from sqlalchemy import update
+        from core.models import Job
+        await self.session.execute(
+            update(Job).where(Job.user_id == u.id).values(cleanup_done=True)
+        )
+        
+        await self.session.delete(u)
+        return True
 
     async def ban_user(self, telegram_id) -> bool:
         u = await self.get_by_telegram_id(telegram_id)

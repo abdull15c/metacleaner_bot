@@ -91,6 +91,13 @@
 
 - `scripts/reset_admin_password.py` — интерактивный сброс пароля по логину (тот же `hash_password`, что у входа).
 
+## 2026-04-02 — Mini App: выдача больших результатов
+
+- `workers/sender`: если итоговый файл больше `telegram_bot_max_send_document_mb` (по умолчанию 49 МБ) — не `sendDocument`, а сообщение со ссылкой `GET /api/webapp/result/{uuid}?t=...` (подпись `itsdangerous`, тот же `ADMIN_SECRET_KEY`).
+- Скачивание: заголовок `X-Telegram-Init-Data` или query `t`; после выдачи по ссылке файлы удаляются по обычному TTL cleanup.
+- `PUBLIC_BASE_URL`, `TELEGRAM_BOT_USERNAME`, `public_download_base_url` в конфиге; UI: размер файла, статусы, кнопка скачать, «открыть бота».
+- `webapp/routes`: пустой upload → `empty_file`; тесты `tests/test_webapp.py`.
+
 ## 2026-04-02 — YouTube: cookies/прокси из админки (БД)
 
 - В `DEFAULTS`: `youtube_cookies_file`, `youtube_proxy`; воркер читает их через `resolve_youtube_dl_cookies_and_proxy()` при каждой задаче (приоритет над `.env`, затем фоллбэк как раньше).

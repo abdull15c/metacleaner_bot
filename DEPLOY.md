@@ -161,6 +161,19 @@ YouTube часто режет **IP датацентров** и без «чело
 4. **Выключить YouTube в боте** и оставить только загрузку файлов: в админке `youtube_enabled=false` или в настройках БД — пользователи скачивают ролик у себя и шлют файлом.
 5. Юридически и по ToS YouTube: режим ссылки в боте — только для контента, на который у вас есть права (как у вас уже в тексте согласия).
 
+## 7.1. Telegram Mini App (`/app`)
+
+Страница открывается с тем же процессом, что и админка (`python -m admin`). В `.env`:
+
+| Переменная | Зачем |
+|------------|--------|
+| `TELEGRAM_WEBAPP_URL` | Полный HTTPS URL страницы, например `https://your.domain/app` — для кнопки WebApp в боте |
+| `PUBLIC_BASE_URL` | Опционально: origin для ссылок «Скачать» в чате; если пусто — берётся из `TELEGRAM_WEBAPP_URL` |
+| `TELEGRAM_BOT_USERNAME` | Имя бота без `@` — кнопка «Открыть бота» в Mini App |
+| `TELEGRAM_BOT_MAX_SEND_DOCUMENT_MB` | По умолчанию `49`. Файлы **больше** этого порога не уходят через `sendDocument` — пользователю приходит ссылка с подписанным токеном и/или скачивание из Mini App |
+
+Nginx: проксируйте на тот же порт, что `ADMIN_PORT`, пути `/app`, `/api/webapp`, `/webapp-static`.
+
 ## 8. Тесты
 
 ```bash
@@ -168,9 +181,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -v
 ```
 
-Интеграционные сценарии (админка, отмена, лимит логина): `tests/test_integration_deploy.py`.
-
-Маркер `integration` стоит на `tests/test_integration_deploy.py`; обычный прогон `pytest tests/` уже включает эти тесты.
+Интеграционные сценарии (админка, отмена, лимит логина): `tests/test_integration_deploy.py`; Mini App: `tests/test_webapp.py` (маркер `integration` на отдельных тестах).
 
 ## 9. Чеклист перед выкладкой
 

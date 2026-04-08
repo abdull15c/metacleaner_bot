@@ -38,8 +38,16 @@ def download_youtube_video(url, output_dir, cookies_path: Optional[Path], proxy:
         capture_output=True, text=True, timeout=30,
     )
     if info_r.returncode != 0: raise InvalidYouTubeURLError(f"Cannot access: {info_r.stderr[:200]}")
-    try: title = json.loads(info_r.stdout).get("title","video")
-    except: title = "video"
+    try:
+        info_json = json.loads(info_r.stdout)
+        title = info_json.get("title","video")
+        filesize = info_json.get("filesize") or info_json.get("filesize_approx")
+        if filesize and filesize > settings.max_file_size_bytes:
+            raise DownloadError("Файл слишком большой")
+    except DownloadError:
+        raise
+    except:
+        title = "video"
     dl_r = subprocess.run(
         [
             "yt-dlp", *extra, "--no-playlist", "--format",
@@ -101,7 +109,12 @@ def download_youtube_task(self, job_uuid):
                 process_video_task.delay(job_uuid)
                 return {"status":"ok"}
             except (InvalidYouTubeURLError, DownloadError) as e:
-                await svc.update_status(job, JobStatus.failed, str(e)); await session.commit()
+                await svc.update_status(job, JobStatus.failed, str(e))
+                if job.user:
+                    from core.services.user_service import UserService
+                    us = UserService(session)
+                    await us.rollback_daily_job_increment(job.user)
+                await session.commit()
                 from workers.sender import notify_failure_task
                 notify_failure_task.delay(job_uuid)
                 return {"error":str(e)}

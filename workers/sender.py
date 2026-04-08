@@ -1,4 +1,5 @@
-import asyncio, logging
+import asyncio
+import logging
 from pathlib import Path
 from core.config import settings
 from workers.celery_app import app
@@ -78,26 +79,65 @@ def send_result_task(self, job_uuid):
                 if not job:
                     return {"error": "missing after lock"}
                 bot = Bot(token=settings.bot_token)
+                proc_path = Path(job.temp_processed_path)
+                proc_size = proc_path.stat().st_size if proc_path.exists() else 0
+                limit = settings.telegram_bot_max_send_document_bytes
                 caption = (
                     f"✅ <b>Метаданные очищены!</b>\n\n"
                     f"📁 Исходный: {_fmt(job.original_size_bytes or 0)}\n"
-                    f"📁 Итоговый: {_fmt(job.processed_size_bytes or 0)}\n"
+                    f"📁 Итоговый: {_fmt(job.processed_size_bytes or proc_size)}\n"
                     f"🆔 Задача: <code>#{job.uuid[:8]}</code>"
                 )
-                ok = await _send_doc(bot, tg_id, job.temp_processed_path, caption)
-                if ok:
-                    await _send_msg(bot, tg_id, "🗑 Временные файлы удалены. Хорошего дня!")
-                    await svc.update_status(job, JobStatus.done); await session.commit()
-                    from workers.cleanup import cleanup_job_files_task
-                    cleanup_job_files_task.delay(job_uuid)
+                ok = False
+                if proc_size <= limit:
+                    ok = await _send_doc(bot, tg_id, job.temp_processed_path, caption)
+                    if ok:
+                        await _send_msg(bot, tg_id, "🗑 Временные файлы удалены. Хорошего дня!")
+                        await svc.update_status(job, JobStatus.done)
+                        await session.commit()
+                        from workers.cleanup import cleanup_job_files_task
+
+                        cleanup_job_files_task.delay(job_uuid)
+                    else:
+                        await svc.update_status(job, JobStatus.failed, "Send failed")
+                        await session.commit()
+                        await _send_msg(
+                            bot,
+                            tg_id,
+                            f"❌ Не удалось отправить файл.\nЗадача <code>#{job.uuid[:8]}</code> завершена с ошибкой.",
+                        )
+                        from workers.cleanup import cleanup_job_files_task
+
+                        cleanup_job_files_task.delay(job_uuid)
                 else:
-                    await svc.update_status(job, JobStatus.failed, "Send failed"); await session.commit()
-                    await _send_msg(bot, tg_id,
-                        f"❌ Не удалось отправить файл.\nЗадача <code>#{job.uuid[:8]}</code> завершена с ошибкой.")
-                    from workers.cleanup import cleanup_job_files_task
-                    cleanup_job_files_task.delay(job_uuid)
+                    base = settings.public_download_base_url
+                    if base:
+                        from urllib.parse import quote
+                        from webapp.result_token import create_result_download_token
+
+                        token = create_result_download_token(job.uuid, tg_id)
+                        link = f"{base}/api/webapp/result/{job.uuid}?t={quote(token)}"
+                        msg = (
+                            f"✅ <b>Метаданные очищены.</b>\n"
+                            f"Файл <b>{_fmt(proc_size)}</b> больше лимита отправки бота (~{settings.telegram_bot_max_send_document_mb} МБ).\n\n"
+                            f"<a href=\"{link}\">⬇️ Скачать результат</a>\n\n"
+                            f"Ссылка действительна несколько дней. Задача <code>#{job.uuid[:8]}</code>\n"
+                            f"Либо откройте Mini App — там тоже можно скачать файл."
+                        )
+                        await _send_msg(bot, tg_id, msg)
+                    else:
+                        await _send_msg(
+                            bot,
+                            tg_id,
+                            f"✅ <b>Готово.</b> Файл {_fmt(proc_size)} слишком большой для отправки в чат.\n"
+                            f"Укажите <code>PUBLIC_BASE_URL</code> или <code>TELEGRAM_WEBAPP_URL</code> в настройках сервера "
+                            f"и откройте Mini App для скачивания.\nЗадача <code>#{job.uuid[:8]}</code>",
+                        )
+                    await svc.update_status(job, JobStatus.done)
+                    await session.commit()
+                    ok = True
                 await bot.session.close()
-                return {"status":"ok" if ok else "send_failed"}
+                return {"status": "ok" if ok else "send_failed"}
             except Exception as e:
                 logger.exception(f"Send error job {job_uuid}")
                 try:

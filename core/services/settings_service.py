@@ -16,7 +16,7 @@ DEFAULTS = {
     "maintenance_mode":         ("false", "Maintenance mode"),
     "youtube_enabled":          ("true",  "Enable YouTube URL processing"),
     "youtube_cookies_file": (
-        "secrets/youtube_cookies.txt",
+        "",
         "Путь к Netscape cookies для yt-dlp (от корня проекта). Очистить поле — только .env и загрузка ниже.",
     ),
     "youtube_proxy": (
@@ -34,11 +34,32 @@ class SettingsService:
         self.session = session
 
     async def get(self, key, default=None):
+        import redis.asyncio as aioredis
+        from core.config import settings
+        r_client = aioredis.from_url(str(settings.redis_url))
+        cache_key = f"setting:{key}"
+        
+        cached = await r_client.get(cache_key)
+        if cached is not None:
+            await r_client.close()
+            try: return json.loads(cached)
+            except: return cached.decode('utf-8')
+            
         r = await self.session.execute(select(Setting).where(Setting.key == key))
         s = r.scalar_one_or_none()
-        if s is None: return default
-        try: return json.loads(s.value)
-        except: return s.value
+        
+        val = default
+        if s is not None:
+            try: val = json.loads(s.value)
+            except: val = s.value
+            
+        try:
+            await r_client.setex(cache_key, 60, json.dumps(val) if not isinstance(val, str) else val)
+        except Exception:
+            pass
+            
+        await r_client.close()
+        return val
 
     async def set(self, key, value, admin_id=None):
         r = await self.session.execute(select(Setting).where(Setting.key == key))
@@ -50,6 +71,13 @@ class SettingsService:
                                      updated_at=datetime.now(timezone.utc), updated_by=admin_id))
         else:
             s.value = v; s.updated_at = datetime.now(timezone.utc); s.updated_by = admin_id
+            
+        import redis.asyncio as aioredis
+        from core.config import settings
+        r_client = aioredis.from_url(str(settings.redis_url))
+        cache_key = f"setting:{key}"
+        await r_client.delete(cache_key)
+        await r_client.close()
 
     async def get_all(self):
         r = await self.session.execute(select(Setting))

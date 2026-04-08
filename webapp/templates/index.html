@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>MetaCleaner — очистка метаданных</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="{{ webapp_static }}/app.css"/>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <h1>Очистка метаданных</h1>
+      <p class="lead">Загрузите видео <b>напрямую на сервер</b> — удобно для крупных файлов, которые неудобно слать через чат бота.</p>
+      <ul class="meta-hints">
+        <li>GPS, дата съёмки</li>
+        <li>Название, устройство</li>
+        <li>Лишние теги контейнера</li>
+      </ul>
+      <form id="up-form" class="upload-zone">
+        <input type="file" id="file" accept="video/*,.mp4,.mkv,.mov,.avi,.webm,.m4v" hidden/>
+        <button type="button" class="btn btn-ghost" id="pick">Выбрать файл</button>
+        <div class="file-meta">
+          <span class="fname" id="fname">Файл не выбран</span>
+          <span class="fsize" id="fsize"></span>
+        </div>
+        <div class="bar-wrap" id="bar-wrap" hidden>
+          <div class="bar" id="bar"></div>
+        </div>
+        <p class="err" id="err" hidden></p>
+        <p class="status" id="status"></p>
+        <div class="done-actions" id="done-actions" hidden>
+          <button type="button" class="btn btn-primary" id="btn-download">Скачать результат</button>
+          {% if telegram_bot_username %}
+          <button type="button" class="btn btn-ghost" id="btn-bot">Открыть бота</button>
+          {% endif %}
+        </div>
+        <button type="submit" class="btn btn-primary" id="submit" disabled>Загрузить</button>
+      </form>
+    </div>
+  </div>
+  <script>window.__TG_BOT__ = "{{ telegram_bot_username }}";</script>
+  <script src="{{ webapp_static }}/app.js"></script>
+</body>
+</html>

@@ -79,9 +79,16 @@ async def handle_video(message: Message, bot: Bot, db_user: User):
             job2 = await js2.get_by_uuid(job.uuid)
             await js2.set_celery_task_id(job2, task.id)
             await session.commit()
+        import redis.asyncio as aioredis
+        from core.config import settings
+        r = aioredis.from_url(str(settings.redis_url))
+        queue_len = await r.scard("active_processing_jobs")
+        await r.close()
+        queue_str = f" Задач перед вами: {queue_len}." if queue_len > 0 else ""
+        
         await status_msg.edit_text(
             f"✅ <b>Файл получен!</b>\n📋 Задача <code>#{job.uuid[:8]}</code>\n\n"
-            f"🔄 В очереди на обработку. Результат отправлю как только будет готово.", parse_mode="HTML")
+            f"🔄 В очереди на обработку.{queue_str} Результат отправлю как только будет готово.", parse_mode="HTML")
     except Exception as e:
         logger.error(f"Celery dispatch failed: {e}")
         async with get_db_session() as session:

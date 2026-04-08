@@ -15,6 +15,8 @@ class Settings(BaseSettings):
         case_sensitive=False, extra="ignore",
     )
     bot_token: str
+    # Имя бота без @ — для ссылки «открыть бота» в Mini App (t.me/username).
+    telegram_bot_username: Optional[str] = None
     admin_secret_key: str
     admin_session_secret: Optional[str] = None
     database_url: str = "sqlite+aiosqlite:///./metacleaner.db"
@@ -52,6 +54,16 @@ class Settings(BaseSettings):
     admin_login_rate_per_minute: int = 10
     admin_security_headers: bool = True
     admin_csp: Optional[str] = None
+    # Полный URL Mini App для кнопки в боте, например https://example.com/app (HTTPS в проде).
+    telegram_webapp_url: Optional[str] = None
+    # Базовый URL сайта для ссылок «скачать результат» в Telegram (если пусто — берётся origin из telegram_webapp_url).
+    public_base_url: Optional[str] = None
+    # Лимит sendDocument в Bot API (~50 МБ); больше — только ссылка HTTP.
+    telegram_bot_max_send_document_mb: int = Field(default=49, ge=1, le=2000)
+    
+    telegram_webhook_url: Optional[str] = None
+    telegram_webhook_secret: Optional[str] = None
+    alert_webhook_url: Optional[str] = None
 
     @field_validator("admin_secret_key")
     @classmethod
@@ -79,6 +91,25 @@ class Settings(BaseSettings):
         if self.metacleaner_root is not None:
             return self.metacleaner_root.expanduser().resolve()
         return _PROJECT_ROOT
+
+    @property
+    def public_download_base_url(self) -> Optional[str]:
+        """Origin для ссылок скачивания результата (бот не может отправить большой файл)."""
+        if self.public_base_url:
+            return str(self.public_base_url).strip().rstrip("/") or None
+        u = (self.telegram_webapp_url or "").strip()
+        if not u:
+            return None
+        from urllib.parse import urlparse
+
+        p = urlparse(u)
+        if p.scheme and p.netloc:
+            return f"{p.scheme}://{p.netloc}".rstrip("/")
+        return None
+
+    @property
+    def telegram_bot_max_send_document_bytes(self) -> int:
+        return int(self.telegram_bot_max_send_document_mb) * 1024 * 1024
 
     def ensure_dirs(self):
         for d in [self.temp_upload_dir, self.temp_processed_dir, self.logs_dir]:

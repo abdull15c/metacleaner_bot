@@ -12,9 +12,51 @@ from admin.security_headers import SecurityHeadersMiddleware
 from core.config import settings as app_settings
 from core.database import get_db_session, get_db
 from core.telegram_html import sanitize_broadcast_html
+from webapp.bootstrap import mount_webapp
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="MetaCleaner Admin", docs_url=None, redoc_url=None, openapi_url=None)
+
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    Instrumentator().instrument(app).expose(app, include_in_schema=False, should_gzip=True)
+except ImportError:
+    pass
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    from aiogram.types import Update
+    from bot.main import bot, dp
+    update = Update.model_validate(await request.json(), context={"bot": bot})
+    await dp.feed_update(bot, update)
+    return {"ok": True}
+
+@app.get("/health")
+async def health_check():
+    import redis.asyncio as aioredis
+    from sqlalchemy import text
+    from core.database import engine
+    from core.config import settings
+    
+    db_ok = False
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+            db_ok = True
+    except Exception:
+        pass
+        
+    redis_ok = False
+    try:
+        r = aioredis.from_url(str(settings.redis_url))
+        await r.ping()
+        redis_ok = True
+        await r.close()
+    except Exception:
+        pass
+        
+    status = "ok" if db_ok and redis_ok else "error"
+    return {"status": status, "db": "ok" if db_ok else "error", "redis": "ok" if redis_ok else "error"}
 
 app.add_middleware(
     SessionMiddleware,
@@ -34,6 +76,8 @@ try:
     app.mount("/static", StaticFiles(directory="static"), name="static")
 except Exception:
     pass
+
+mount_webapp(app)
 
 templates = Jinja2Templates(directory="admin/templates")
 templates.env.globals["csrf_token"] = ensure_csrf
@@ -104,15 +148,101 @@ async def dashboard(request: Request, session: AsyncSession = Depends(get_db), a
     })
 
 
+from fastapi.responses import StreamingResponse
+import io
+import csv
+
+@app.get("/admin/jobs/export.csv")
+async def export_jobs_csv(session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from core.models import Job
+    
+    async def iter_jobs():
+        yield "ID,UUID,User_ID,Source,Status,Created_At,Completed_At\n"
+        
+        stmt = select(Job).options(selectinload(Job.user)).order_by(Job.created_at.desc())
+        r = await session.stream(stmt)
+        
+        async for row in r:
+            job = row[0]
+            uid = job.user.telegram_id if job.user else ""
+            status = job.status.value if hasattr(job.status, "value") else str(job.status)
+            src = job.source_type.value if hasattr(job.source_type, "value") else str(job.source_type)
+            cat = job.created_at.isoformat() if job.created_at else ""
+            comat = job.completed_at.isoformat() if job.completed_at else ""
+            
+            line = f"{job.id},{job.uuid},{uid},{src},{status},{cat},{comat}\n"
+            yield line
+            
+    return StreamingResponse(iter_jobs(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=jobs_export.csv"})
+
+@app.get("/admin/users/export.csv")
+async def export_users_csv(session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from sqlalchemy import select
+    from core.models import User
+    
+    async def iter_users():
+        yield "ID,Telegram_ID,Username,First_Name,Created_At,Last_Seen_At,Jobs_Count,Banned\n"
+        
+        stmt = select(User).order_by(User.created_at.desc())
+        r = await session.stream(stmt)
+        
+        async for row in r:
+            u = row[0]
+            uname = (u.username or "").replace(",", "")
+            fname = (u.first_name or "").replace(",", "")
+            cat = u.created_at.isoformat() if u.created_at else ""
+            lsat = u.last_seen_at.isoformat() if u.last_seen_at else ""
+            
+            line = f"{u.id},{u.telegram_id},{uname},{fname},{cat},{lsat},{u.daily_job_count},{u.is_banned}\n"
+            yield line
+            
+    return StreamingResponse(iter_users(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=users_export.csv"})
+
 @app.get("/admin/jobs", response_class=HTMLResponse)
-async def jobs_list(request: Request, page: int = 1, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
-    from core.services.job_service import JobService
-    js = JobService(session); limit = 20; offset = (page-1)*limit
-    total = await js.count_total()
+async def jobs_list(request: Request, page: int = 1, q: str = "", status: str = "", session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from sqlalchemy import select, or_, func
+    from sqlalchemy.orm import selectinload
+    from core.models import Job, JobStatus, User
+    limit = 20; offset = (page-1)*limit
+    
+    stmt = select(Job).options(selectinload(Job.user))
+    
+    q_val = q.strip()
+    if q_val:
+        stmt = stmt.join(User, isouter=True).where(
+            or_(
+                Job.uuid.ilike(f"%{q_val}%"),
+                User.username.ilike(f"%{q_val}%")
+            )
+        )
+        
+    if status and hasattr(JobStatus, status):
+        stmt = stmt.where(Job.status == JobStatus[status])
+        
+    count_stmt = select(func.count(Job.id))
+    if q_val:
+        count_stmt = count_stmt.join(User, isouter=True).where(
+            or_(
+                Job.uuid.ilike(f"%{q_val}%"),
+                User.username.ilike(f"%{q_val}%")
+            )
+        )
+    if status and hasattr(JobStatus, status):
+        count_stmt = count_stmt.where(Job.status == JobStatus[status])
+        
+    total_r = await session.execute(count_stmt)
+    total = total_r.scalar() or 0
+    
+    r = await session.execute(stmt.order_by(Job.created_at.desc()).limit(limit).offset(offset))
+    jobs = list(r.scalars().all())
+
     return templates.TemplateResponse("jobs.html", {
         "request": request, "admin": admin, "active_page": "jobs",
-        "jobs": await js.get_recent_jobs(limit=limit, offset=offset),
-        "page": page, "total_pages": max(1,(total+limit-1)//limit), "total": total,
+        "jobs": jobs,
+        "page": page, "total_pages": max(1, (total+limit-1)//limit), "total": total,
+        "q": q_val, "status": status
     })
 
 
@@ -126,17 +256,43 @@ async def job_detail(request: Request, job_id: str, session: AsyncSession = Depe
 
 
 @app.get("/admin/users", response_class=HTMLResponse)
-async def users_list(request: Request, page: int = 1, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
-    from sqlalchemy import select
+async def users_list(request: Request, page: int = 1, q: str = "", session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from sqlalchemy import select, or_, cast, String, func
     from core.models import User
     from core.services.user_service import UserService
     limit = 30; offset = (page-1)*limit
-    r = await session.execute(select(User).order_by(User.created_at.desc()).limit(limit).offset(offset))
-    total = await UserService(session).count_total()
+    stmt = select(User)
+    
+    q_val = q.strip()
+    if q_val:
+        stmt = stmt.where(
+            or_(
+                User.username.ilike(f"%{q_val}%"),
+                User.first_name.ilike(f"%{q_val}%"),
+                cast(User.telegram_id, String).ilike(f"%{q_val}%")
+            )
+        )
+    
+    count_stmt = select(func.count(User.id))
+    if q_val:
+        count_stmt = count_stmt.where(
+            or_(
+                User.username.ilike(f"%{q_val}%"),
+                User.first_name.ilike(f"%{q_val}%"),
+                cast(User.telegram_id, String).ilike(f"%{q_val}%")
+            )
+        )
+    
+    total_r = await session.execute(count_stmt)
+    total = total_r.scalar() or 0
+
+    r = await session.execute(stmt.order_by(User.created_at.desc()).limit(limit).offset(offset))
+    
     return templates.TemplateResponse("users.html", {
         "request": request, "admin": admin, "active_page": "users",
         "users": list(r.scalars().all()), "page": page,
         "total_pages": max(1,(total+limit-1)//limit), "total": total,
+        "q": q_val
     })
 
 
@@ -229,11 +385,17 @@ async def bc_pause(request: Request, bid: int, session: AsyncSession = Depends(g
 
 @app.get("/admin/errors", response_class=HTMLResponse)
 async def errors_page(request: Request, page: int = 1, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     from core.models import SystemLog, LogLevel
     limit = 50; offset = (page-1)*limit
     r = await session.execute(select(SystemLog).where(SystemLog.level.in_([LogLevel.ERROR,LogLevel.CRITICAL])).order_by(SystemLog.created_at.desc()).limit(limit).offset(offset))
-    return templates.TemplateResponse("errors.html", {"request": request, "admin": admin, "active_page": "errors", "logs": list(r.scalars().all()), "page": page})
+    total_query = await session.execute(select(func.count(SystemLog.id)).where(SystemLog.level.in_([LogLevel.ERROR,LogLevel.CRITICAL])))
+    total = total_query.scalar() or 0
+    return templates.TemplateResponse("errors.html", {
+        "request": request, "admin": admin, "active_page": "errors", 
+        "logs": list(r.scalars().all()), "page": page,
+        "total_pages": max(1, (total + limit - 1) // limit), "total": total
+    })
 
 
 async def _youtube_admin_template_ctx(request: Request, session: AsyncSession):

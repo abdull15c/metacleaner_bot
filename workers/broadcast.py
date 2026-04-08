@@ -45,7 +45,13 @@ def send_broadcast_chunk_task(broadcast_id):
                     select(BroadcastRecipient).where(BroadcastRecipient.id == rec.id)
                     .options(selectinload(BroadcastRecipient.user)))
                 rec_full = rr.scalar_one_or_none()
-                if not rec_full or not rec_full.user: failed += 1; continue
+                if not rec_full or not rec_full.user:
+                    failed += 1
+                    bc.failed_count += 1
+                    rec_full.status = RecipientStatus.failed
+                    rec_full.error = "User not found"
+                    await session.commit()
+                    continue
                 tg_id = rec_full.user.telegram_id
                 text = sanitize_broadcast_html(bc.message_text or "")
             ok = False
