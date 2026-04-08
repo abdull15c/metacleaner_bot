@@ -8,13 +8,31 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04        # зафиксировать Ubuntu (не latest)
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+          python-version: "3.11"  # зафиксировать Python 3.11
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg nodejs npm
+
+      - name: Install Python deps
+        run: |
+          pip install --upgrade pip
+          pip install bcrypt==4.0.1
+          pip install -r requirements.txt
+
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+        run: python -m pytest tests/ -v --tb=short -x
+        env:
+          BOT_TOKEN: "1234567890:test_token_aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ADMIN_SECRET_KEY: "test_secret_key_that_is_long_enough_32c"
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          REDIS_URL: "redis://localhost:6379/15"
+          CELERY_BROKER_URL: "redis://localhost:6379/15"
+          CELERY_RESULT_BACKEND: "redis://localhost:6379/15"

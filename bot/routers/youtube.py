@@ -86,7 +86,6 @@ async def consent_yes(callback: CallbackQuery, state: FSMContext, db_user: User)
             js2 = JobService(session); job2 = await js2.get_by_uuid(job.uuid)
             await js2.set_celery_task_id(job2, task.id); await session.commit()
         import redis.asyncio as aioredis
-        from core.config import settings
         r = aioredis.from_url(str(settings.redis_url))
         queue_len = await r.scard("active_processing_jobs")
         await r.close()

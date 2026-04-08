@@ -80,7 +80,6 @@ async def handle_video(message: Message, bot: Bot, db_user: User):
             await js2.set_celery_task_id(job2, task.id)
             await session.commit()
         import redis.asyncio as aioredis
-        from core.config import settings
         r = aioredis.from_url(str(settings.redis_url))
         queue_len = await r.scard("active_processing_jobs")
         await r.close()

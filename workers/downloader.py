@@ -34,7 +34,9 @@ def download_youtube_video(url, output_dir, cookies_path: Optional[Path], proxy:
     template = str(output_dir / f"{name}.%(ext)s")
     extra = _yt_dlp_extra_args(cookies_path, proxy)
     info_r = subprocess.run(
-        ["yt-dlp", *extra, "--dump-json", "--no-playlist", "--quiet", url],
+        ["yt-dlp", "--js-runtimes", "node",
+         "--extractor-args", "youtube:player_client=web,default",
+         *extra, "--dump-json", "--no-playlist", "--quiet", url],
         capture_output=True, text=True, timeout=30,
     )
     if info_r.returncode != 0: raise InvalidYouTubeURLError(f"Cannot access: {info_r.stderr[:200]}")
@@ -50,7 +52,9 @@ def download_youtube_video(url, output_dir, cookies_path: Optional[Path], proxy:
         title = "video"
     dl_r = subprocess.run(
         [
-            "yt-dlp", *extra, "--no-playlist", "--format",
+            "yt-dlp", "--js-runtimes", "node",
+            "--extractor-args", "youtube:player_client=web,default",
+            *extra, "--no-playlist", "--format",
             "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]",
             "--merge-output-format", "mp4", "--output", template, "--no-progress", "--quiet", url,
         ],
