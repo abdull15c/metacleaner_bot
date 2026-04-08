@@ -28,11 +28,12 @@ CONSENT = """
 """.strip()
 
 
-@router.message(F.text.regexp(r"https?://").as_("url"))
+# Disabled the regex matcher since it is moved to download.py
+
+# @router.message(F.text.regexp(r"https?://").as_("url"))
 async def handle_url(message: Message, state: FSMContext, db_user: User):
+    # This handler is now called from download.py if platform is youtube
     text = message.text or ""
-    if not YT_RE.search(text):
-        await message.answer("❌ Ссылка не распознана. Отправьте файл или YouTube-ссылку."); return
     async with get_db_session() as session:
         ss = SettingsService(session)
         if not await ss.get("youtube_enabled", True):

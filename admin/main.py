@@ -143,6 +143,7 @@ async def dashboard(request: Request, session: AsyncSession = Depends(get_db), a
         "total_users":     await us.count_total(),
         "active_today":    await us.count_active_today(),
         "recent_jobs":     await js.get_recent_jobs(limit=10),
+        "force_sub_enabled": (await SettingsService(session).get("force_sub_enabled", "false")) == "true",
         "temp_files":      storage.temp_file_count(),
         "temp_size_mb":    storage.temp_total_size_mb(),
     })
@@ -321,6 +322,64 @@ async def unban(request: Request, telegram_id: int, session: AsyncSession = Depe
     from core.services.user_service import UserService
     await UserService(session).unban_user(telegram_id); await session.commit()
     return RedirectResponse(f"/admin/users/{telegram_id}", status_code=303)
+
+
+@app.get("/admin/sponsors", response_class=HTMLResponse)
+async def sponsors_list(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from sqlalchemy import select
+    from core.models import SponsorChannel
+    from core.services.settings_service import SettingsService
+    r = await session.execute(select(SponsorChannel))
+    force_sub = await SettingsService(session).get("force_sub_enabled", "false")
+    return templates.TemplateResponse("sponsors.html", {
+        "request": request, "admin": admin, "active_page": "sponsors",
+        "channels": list(r.scalars().all()),
+        "force_sub_enabled": force_sub == "true"
+    })
+
+@app.post("/admin/sponsors")
+async def create_sponsor(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from core.models import SponsorChannel
+    form = await request.form()
+    verify_csrf(request, form)
+    cid = int(form.get("channel_id"))
+    name = str(form.get("name"))
+    url = str(form.get("url"))
+    
+    session.add(SponsorChannel(channel_id=cid, name=name, url=url))
+    await session.commit()
+    return RedirectResponse("/admin/sponsors", status_code=303)
+
+@app.post("/admin/sponsors/{sid}/delete")
+async def delete_sponsor(sid: int, request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from sqlalchemy import delete
+    from core.models import SponsorChannel
+    form = await request.form()
+    verify_csrf(request, form)
+    await session.execute(delete(SponsorChannel).where(SponsorChannel.id == sid))
+    await session.commit()
+    return RedirectResponse("/admin/sponsors", status_code=303)
+
+@app.post("/admin/sponsors/toggle")
+async def toggle_force_sub(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from core.services.settings_service import SettingsService
+    import redis.asyncio as aioredis
+    from core.config import settings
+    form = await request.form()
+    verify_csrf(request, form)
+    
+    svc = SettingsService(session)
+    current = await svc.get("force_sub_enabled", "false")
+    new_val = "true" if current == "false" else "false"
+    await svc.set("force_sub_enabled", new_val, admin.id)
+    await session.commit()
+    
+    # Sync to Redis
+    r = aioredis.from_url(str(settings.redis_url))
+    await r.set("settings:force_sub:enabled", new_val)
+    await r.close()
+    
+    return RedirectResponse("/admin/sponsors", status_code=303)
 
 
 @app.get("/admin/broadcasts", response_class=HTMLResponse)

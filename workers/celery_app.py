@@ -15,6 +15,7 @@ app.config_from_object({
         "workers.cleanup.cleanup_job_files_task":     {"queue": "cleanup"},
         "workers.cleanup.periodic_cleanup_task":      {"queue": "cleanup"},
         "workers.broadcast.send_broadcast_chunk_task":{"queue": "broadcast"},
+        "workers.downloader_only.download_only_task": {"queue": "video"},
     },
     "task_default_queue": "video",
     "task_acks_late": True,
@@ -30,4 +31,5 @@ app.config_from_object({
     },
 })
 app.autodiscover_tasks(["workers.video_processor","workers.downloader",
-                        "workers.sender","workers.cleanup","workers.broadcast"])
+                        "workers.sender","workers.cleanup","workers.broadcast",
+                        "workers.downloader_only"])

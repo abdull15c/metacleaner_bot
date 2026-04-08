@@ -8,7 +8,8 @@ from core.config import settings
 from core.database import init_db
 from bot.middleware.anti_flood import AntiFloodMiddleware
 from bot.middleware.auth import AuthMiddleware
-from bot.routers import errors, start, status, upload, youtube
+from bot.middleware.force_sub import ForceSubMiddleware
+from bot.routers import errors, start, status, upload, youtube, download
 
 log = logging.getLogger(__name__)
 
@@ -68,9 +69,15 @@ async def main():
     )
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
+    
+    # Force Subscribe Middleware
+    dp.message.middleware(ForceSubMiddleware(redis=redis_client))
+    dp.callback_query.middleware(ForceSubMiddleware(redis=redis_client))
+    
     dp.include_router(errors.router)
     dp.include_router(start.router)
     dp.include_router(status.router)
+    dp.include_router(download.router)
     dp.include_router(youtube.router)
     dp.include_router(upload.router)
     dp.startup.register(on_startup)

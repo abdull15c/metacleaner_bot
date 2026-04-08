@@ -12,7 +12,12 @@ BOT_TOKEN=your_bot_token_here
 # Файлы больше этого размера не отправляются через sendDocument — только HTTP-ссылка / Mini App
 # TELEGRAM_BOT_MAX_SEND_DOCUMENT_MB=49
 # Панель администратора (python -m admin)
+# Для доступа к админке снаружи (продакшн):
+# ADMIN_HOST=0.0.0.0
+# Для локальной разработки (только localhost):
 ADMIN_HOST=127.0.0.1
+
+# Порт админки
 ADMIN_PORT=8000
 ADMIN_SECRET_KEY=change_this_to_a_random_32_char_string
 DATABASE_URL=sqlite+aiosqlite:///./metacleaner.db
@@ -40,6 +45,9 @@ YOUTUBE_ENABLED=true
 # (если задан и файл есть — приоритет над файлом из админки)
 # Необязательно: другой путь для файла из админки (по умолчанию secrets/youtube_cookies.txt)
 # YOUTUBE_COOKIES_ADMIN_PATH=secrets/youtube_cookies.txt
+# INSTAGRAM_COOKIES_FILE=secrets/instagram_cookies.txt
+# TIKTOK_COOKIES_FILE=secrets/tiktok_cookies.txt
+# FACEBOOK_COOKIES_FILE=secrets/facebook_cookies.txt
 # Если Celery стартует не из каталога проекта — задайте абсолютный путь к репозиторию:
 # METACLEANER_ROOT=/root/metacleaner_bot
 # Опционально резидентный HTTP(S) прокси:
@@ -88,6 +96,12 @@ celerybeat.pid
 backups/
 secrets/*
 !secrets/.gitkeep
+
+
+================================================================================
+FILE: .python-version
+================================================================================
+3.11
 
 
 ================================================================================
@@ -515,6 +529,13 @@ services:
       timeout: 3s
       retries: 5
 
+  # Только для локальной разработки без systemd
+  # bot:
+  #   build: .
+  #   command: python -m bot.main
+  #   env_file: .env
+  #   depends_on: [redis]
+  
   bot:
     build: .
     restart: unless-stopped
@@ -539,6 +560,12 @@ services:
         condition: service_healthy
     command: python -m admin
 
+  # worker:
+  #   build: .
+  #   command: celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo
+  #   env_file: .env
+  #   depends_on: [redis]
+  
   worker:
     build: .
     restart: unless-stopped
@@ -633,6 +660,37 @@ if __name__ == "__main__":
 
 
 ================================================================================
+FILE: Makefile
+================================================================================
+.PHONY: install run-bot run-worker run-admin migrate
+
+install:
+	python3.11 -m venv .venv
+	.venv/bin/pip install --upgrade pip
+	.venv/bin/pip install bcrypt==4.0.1
+	.venv/bin/pip install -r requirements.txt
+
+migrate:
+	.venv/bin/python -m alembic upgrade head
+	.venv/bin/python scripts/seed_settings.py
+
+admin-create:
+	.venv/bin/python scripts/create_admin.py
+
+run-bot:
+	.venv/bin/python -m bot.main
+
+run-worker:
+	.venv/bin/celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo
+
+run-admin:
+	.venv/bin/python -m admin
+
+test:
+	.venv/bin/python -m pytest tests/ -v --tb=short
+
+
+================================================================================
 FILE: project_manifest.md
 ================================================================================
 # MetaCleaner Bot — Project Manifest
@@ -677,6 +735,36 @@ FILE: README.md
 Telegram-бот для очистки метаданных из видеофайлов.
 Удаляет title, GPS, дату записи и другие теги без перекодирования.
 
+## Быстрый деплой на Ubuntu сервер
+
+### Требования
+- Ubuntu 22.04 или 24.04
+- Минимум 1 ГБ RAM
+- Python 3.11 (скрипт установит автоматически)
+- Node.js 20 (скрипт установит автоматически)
+- FFmpeg (скрипт установит автоматически)
+
+### Установка
+
+  git clone https://github.com/abdull15c/metacleaner_bot.git
+  cd metacleaner_bot
+  bash deploy/setup.sh
+
+Следуй инструкциям скрипта.
+
+### Известные проблемы
+
+Python 3.13 не поддерживается — используй Python 3.11.
+Если сервер поставил 3.13, скрипт setup.sh установит 3.11 из исходников.
+
+bcrypt 4.1+ несовместим с passlib — requirements.txt уже содержит
+bcrypt==4.0.1 для фикса.
+
+YouTube скачивание требует Node.js — setup.sh устанавливает автоматически.
+
+YouTube с VPS IP требует cookies — загрузи через Adminку → Настройки.
+
+
 ## Быстрый старт
 
 ```bash
@@ -700,8 +788,8 @@ python scripts\create_admin.py
 
 # 6. Запустить (3 отдельных окна)
 
-# Окно 1 — бот:
-python -m bot.main
+    # Окно 1 — бот:
+    python -m bot.main
 
 # Окно 2 — воркер:
 celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo
@@ -744,6 +832,7 @@ jinja2==3.1.4
 python-multipart==0.0.9
 itsdangerous==2.2.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 sqlalchemy[asyncio]==2.0.30
 aiosqlite==0.20.0
 asyncpg==0.29.0
@@ -751,7 +840,7 @@ bleach==6.1.0
 alembic==1.13.1
 celery==5.3.6
 redis==5.0.4
-yt-dlp==2024.5.27
+yt-dlp>=2026.3.17
 pydantic==2.7.1
 pydantic-settings==2.2.1
 python-dotenv==1.0.1
@@ -761,6 +850,40 @@ pytest-asyncio==0.23.6
 pytest-mock==3.14.0
 httpx==0.27.0
 pyyaml==6.0.1
+
+# JavaScript runtime для yt-dlp (устанавливать вручную на сервере)
+# apt-get install -y nodejs
+
+
+================================================================================
+FILE: .github\workflows\deploy.yml
+================================================================================
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /root/metacleaner_bot
+            git pull origin main
+            source .venv/bin/activate
+            pip install -r requirements.txt --quiet
+            pip install -U yt-dlp --quiet
+            python -m alembic upgrade head
+            systemctl restart metacleaner-bot metacleaner-worker metacleaner-admin
+            sleep 3
+            systemctl is-active metacleaner-bot metacleaner-worker metacleaner-admin
 
 
 ================================================================================
@@ -776,16 +899,34 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04        # зафиксировать Ubuntu (не latest)
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+          python-version: "3.11"  # зафиксировать Python 3.11
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg nodejs npm
+
+      - name: Install Python deps
+        run: |
+          pip install --upgrade pip
+          pip install bcrypt==4.0.1
+          pip install -r requirements.txt
+
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+        run: python -m pytest tests/ -v --tb=short -x
+        env:
+          BOT_TOKEN: "1234567890:test_token_aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ADMIN_SECRET_KEY: "test_secret_key_that_is_long_enough_32c"
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          REDIS_URL: "redis://localhost:6379/15"
+          CELERY_BROKER_URL: "redis://localhost:6379/15"
+          CELERY_RESULT_BACKEND: "redis://localhost:6379/15"
 
 
 ================================================================================
@@ -892,40 +1033,46 @@ def verify_csrf(request: Request, form: FormData) -> None:
 ================================================================================
 FILE: admin\login_rate.py
 ================================================================================
-"""Ограничение частоты POST /admin/login по IP (in-process). На нескольких воркерах Uvicorn — см. DEPLOY.md (nginx limit_req)."""
+"""Ограничение частоты POST /admin/login по IP с использованием Redis."""
 import time
-from collections import deque
-from typing import Deque, Dict
-
 from fastapi import HTTPException
 from starlette.requests import Request
+from redis import Redis
 
 from core.config import get_settings
 
-_counters: Dict[str, Deque[float]] = {}
-_WINDOW_SEC = 60.0
-
-
-def reset_counters_for_tests():
-    _counters.clear()
-
+_WINDOW_SEC = 60
 
 def check_admin_login_rate(request: Request) -> None:
-    lim = get_settings().admin_login_rate_per_minute
+    settings = get_settings()
+    lim = settings.admin_login_rate_per_minute
     if not lim or lim <= 0:
         return
+        
     client = request.client
     ip = (client.host if client else "") or "unknown"
-    now = time.monotonic()
-    dq = _counters.setdefault(ip, deque())
-    while dq and now - dq[0] > _WINDOW_SEC:
-        dq.popleft()
-    if len(dq) >= lim:
-        raise HTTPException(
-            status_code=429,
-            detail="Слишком много попыток входа. Подождите минуту.",
-        )
-    dq.append(now)
+    
+    # We use a simple redis counter with expiration
+    try:
+        r = Redis.from_url(settings.redis_url)
+        key = f"admin_login_rate:{ip}"
+        
+        current = r.get(key)
+        if current and int(current) >= lim:
+            raise HTTPException(
+                status_code=429,
+                detail="Слишком много попыток входа. Подождите минуту.",
+            )
+            
+        pipe = r.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, _WINDOW_SEC)
+        pipe.execute()
+    except HTTPException:
+        raise
+    except Exception:
+        # If Redis is down, we don't block login, just log warning if we had logger
+        pass
 
 
 ================================================================================
@@ -1076,6 +1223,7 @@ async def dashboard(request: Request, session: AsyncSession = Depends(get_db), a
         "total_users":     await us.count_total(),
         "active_today":    await us.count_active_today(),
         "recent_jobs":     await js.get_recent_jobs(limit=10),
+        "force_sub_enabled": (await SettingsService(session).get("force_sub_enabled", "false")) == "true",
         "temp_files":      storage.temp_file_count(),
         "temp_size_mb":    storage.temp_total_size_mb(),
     })
@@ -1254,6 +1402,64 @@ async def unban(request: Request, telegram_id: int, session: AsyncSession = Depe
     from core.services.user_service import UserService
     await UserService(session).unban_user(telegram_id); await session.commit()
     return RedirectResponse(f"/admin/users/{telegram_id}", status_code=303)
+
+
+@app.get("/admin/sponsors", response_class=HTMLResponse)
+async def sponsors_list(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from sqlalchemy import select
+    from core.models import SponsorChannel
+    from core.services.settings_service import SettingsService
+    r = await session.execute(select(SponsorChannel))
+    force_sub = await SettingsService(session).get("force_sub_enabled", "false")
+    return templates.TemplateResponse("sponsors.html", {
+        "request": request, "admin": admin, "active_page": "sponsors",
+        "channels": list(r.scalars().all()),
+        "force_sub_enabled": force_sub == "true"
+    })
+
+@app.post("/admin/sponsors")
+async def create_sponsor(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from core.models import SponsorChannel
+    form = await request.form()
+    verify_csrf(request, form)
+    cid = int(form.get("channel_id"))
+    name = str(form.get("name"))
+    url = str(form.get("url"))
+    
+    session.add(SponsorChannel(channel_id=cid, name=name, url=url))
+    await session.commit()
+    return RedirectResponse("/admin/sponsors", status_code=303)
+
+@app.post("/admin/sponsors/{sid}/delete")
+async def delete_sponsor(sid: int, request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from sqlalchemy import delete
+    from core.models import SponsorChannel
+    form = await request.form()
+    verify_csrf(request, form)
+    await session.execute(delete(SponsorChannel).where(SponsorChannel.id == sid))
+    await session.commit()
+    return RedirectResponse("/admin/sponsors", status_code=303)
+
+@app.post("/admin/sponsors/toggle")
+async def toggle_force_sub(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
+    from core.services.settings_service import SettingsService
+    import redis.asyncio as aioredis
+    from core.config import settings
+    form = await request.form()
+    verify_csrf(request, form)
+    
+    svc = SettingsService(session)
+    current = await svc.get("force_sub_enabled", "false")
+    new_val = "true" if current == "false" else "false"
+    await svc.set("force_sub_enabled", new_val, admin.id)
+    await session.commit()
+    
+    # Sync to Redis
+    r = aioredis.from_url(str(settings.redis_url))
+    await r.set("settings:force_sub:enabled", new_val)
+    await r.close()
+    
+    return RedirectResponse("/admin/sponsors", status_code=303)
 
 
 @app.get("/admin/broadcasts", response_class=HTMLResponse)
@@ -1654,6 +1860,7 @@ code{font-family:var(--mono);font-size:12px;background:rgba(255,255,255,.06);pad
     <a href="/admin/jobs"      class="{% if active_page=='jobs' %}on{% endif %}">⚙ Задачи</a>
     <a href="/admin/users"     class="{% if active_page=='users' %}on{% endif %}">◉ Пользователи</a>
     <a href="/admin/broadcasts"class="{% if active_page=='broadcasts' %}on{% endif %}">◎ Рассылки</a>
+    <a href="/admin/sponsors"  class="{% if active_page=='sponsors' %}on{% endif %}">★ Спонсоры</a>
     <a href="/admin/errors"    class="{% if active_page=='errors' %}on{% endif %}">⚠ Ошибки</a>
     <a href="/admin/settings"  class="{% if active_page=='settings' %}on{% endif %}">◧ Настройки</a>
   </nav>
@@ -1911,6 +2118,81 @@ FILE: admin\templates\settings.html
 {% endblock %}
 
 ================================================================================
+FILE: admin\templates\sponsors.html
+================================================================================
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Каналы (Спонсоры)</h1>
+    <div>
+        <form action="/admin/sponsors/toggle" method="POST" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn {{ 'btn-danger' if force_sub_enabled else 'btn-success' }}">
+                {{ 'Выключить' if force_sub_enabled else 'Включить' }} обязательную подписку
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">Добавить канал</div>
+    <div class="card-body">
+        <form action="/admin/sponsors" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="row">
+                <div class="col-md-3">
+                    <input type="number" name="channel_id" class="form-control" placeholder="ID канала (-100...)" required>
+                </div>
+                <div class="col-md-3">
+                    <input type="text" name="name" class="form-control" placeholder="Название" required>
+                </div>
+                <div class="col-md-4">
+                    <input type="url" name="url" class="form-control" placeholder="Ссылка (https://t.me/...)" required>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">Добавить</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">Список каналов</div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Название</th>
+                    <th>Ссылка</th>
+                    <th>Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in channels %}
+                <tr>
+                    <td><code>{{ c.channel_id }}</code></td>
+                    <td>{{ c.name }}</td>
+                    <td><a href="{{ c.url }}" target="_blank">{{ c.url }}</a></td>
+                    <td>
+                        <form action="/admin/sponsors/{{ c.id }}/delete" method="POST" onsubmit="return confirm('Удалить?')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="text-center text-muted">Каналов пока нет</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+
+================================================================================
 FILE: admin\templates\users.html
 ================================================================================
 {% extends "base.html" %}
@@ -1976,7 +2258,8 @@ from core.config import settings
 from core.database import init_db
 from bot.middleware.anti_flood import AntiFloodMiddleware
 from bot.middleware.auth import AuthMiddleware
-from bot.routers import errors, start, status, upload, youtube
+from bot.middleware.force_sub import ForceSubMiddleware
+from bot.routers import errors, start, status, upload, youtube, download
 
 log = logging.getLogger(__name__)
 
@@ -2036,9 +2319,15 @@ async def main():
     )
     dp.message.middleware(AuthMiddleware())
     dp.callback_query.middleware(AuthMiddleware())
+    
+    # Force Subscribe Middleware
+    dp.message.middleware(ForceSubMiddleware(redis=redis_client))
+    dp.callback_query.middleware(ForceSubMiddleware(redis=redis_client))
+    
     dp.include_router(errors.router)
     dp.include_router(start.router)
     dp.include_router(status.router)
+    dp.include_router(download.router)
     dp.include_router(youtube.router)
     dp.include_router(upload.router)
     dp.startup.register(on_startup)
@@ -2085,6 +2374,36 @@ class VideoFileFilter(BaseFilter):
 class UnsupportedFileFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
         return bool(message.document and not await VideoFileFilter()(message))
+
+
+================================================================================
+FILE: bot\keyboards\main_menu.py
+================================================================================
+from typing import Optional
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, MenuButtonWebApp, LoginUrl
+
+from core.config import settings
+
+def webapp_upload_keyboard() -> ReplyKeyboardMarkup:
+    url = (settings.telegram_webapp_url or "").strip()
+    # Add main buttons
+    buttons = [
+        [KeyboardButton(text="🧹 Очистить видео"), KeyboardButton(text="📊 Моя статистика")],
+        [KeyboardButton(text="❓ Помощь")]
+    ]
+    
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True,
+        persistent=True
+    )
+
+def get_main_menu_button() -> MenuButtonWebApp:
+    url = (settings.telegram_webapp_url or "").strip()
+    return MenuButtonWebApp(
+        text="🎬 Загрузить > 50MB",
+        web_app=WebAppInfo(url=url)
+    )
 
 
 ================================================================================
@@ -2240,6 +2559,275 @@ class AuthMiddleware(BaseMiddleware):
 
 
 ================================================================================
+FILE: bot\middleware\force_sub.py
+================================================================================
+import logging
+from typing import Any, Awaitable, Callable, Dict, Optional
+
+from aiogram import BaseMiddleware, Bot
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from redis.asyncio import Redis
+from sqlalchemy import select
+
+from core.database import get_db_session
+from core.models import SponsorChannel, User
+from core.config import settings
+
+logger = logging.getLogger(__name__)
+
+class ForceSubMiddleware(BaseMiddleware):
+    def __init__(self, redis: Optional[Redis] = None):
+        self.redis = redis
+        super().__init__()
+
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Any,
+        data: Dict[str, Any],
+    ) -> Any:
+        if not isinstance(event, (Message, CallbackQuery)):
+            return await handler(event, data)
+
+        user: Optional[User] = data.get("db_user")
+        if not user:
+            return await handler(event, data)
+
+        # 1. Check if enabled in Redis (fast path)
+        force_sub_enabled = "false"
+        if self.redis:
+            val = await self.redis.get("settings:force_sub:enabled")
+            if val:
+                force_sub_enabled = val.decode() if isinstance(val, bytes) else str(val)
+        
+        if force_sub_enabled != "true":
+            return await handler(event, data)
+
+        # 2. Check Cache
+        user_id = event.from_user.id
+        cache_key = f"user_sub_verified:{user_id}"
+        if self.redis:
+            if await self.redis.get(cache_key):
+                return await handler(event, data)
+
+        # 3. Check Subscriptions
+        async with get_db_session() as session:
+            stmt = select(SponsorChannel).where(SponsorChannel.is_active == True)
+            res = await session.execute(stmt)
+            channels = res.scalars().all()
+
+        if not channels:
+            return await handler(event, data)
+
+        bot: Bot = data["bot"]
+        not_subscribed = []
+
+        for ch in channels:
+            try:
+                member = await bot.get_chat_member(chat_id=ch.channel_id, user_id=user_id)
+                if member.status in ["left", "kicked"]:
+                    not_subscribed.append(ch)
+            except Exception as e:
+                logger.warning(f"Failed to check sub for channel {ch.channel_id}: {e}")
+                # If error (bot not admin), assume subscribed to not block user
+                continue
+
+        if not not_subscribed:
+            # All good, cache for 10 min
+            if self.redis:
+                await self.redis.set(cache_key, "1", ex=600)
+            return await handler(event, data)
+
+        # 4. Block and show UI
+        kb_list = []
+        for ch in not_subscribed:
+            kb_list.append([InlineKeyboardButton(text=f"📢 {ch.name}", url=ch.url)])
+        
+        kb_list.append([InlineKeyboardButton(text="🔄 Я подписался!", callback_data="check_subs")])
+        
+        msg_text = "⚠️ <b>Для использования бота необходимо подписаться на наши каналы:</b>"
+        
+        if isinstance(event, Message):
+            await event.answer(msg_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
+        else:
+            await event.message.answer(msg_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
+            await event.answer()
+        
+        return
+
+
+================================================================================
+FILE: bot\routers\download.py
+================================================================================
+import logging
+from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+
+from core.platform_detect import detect_platform, is_supported_url
+from core.database import get_db_session
+from core.models import SiteDownloadJob, JobStatus, DownloadFormat, User
+from core.services.user_service import UserService
+from bot.states.youtube import YouTubeConsentStates  # Using an existing FSM context strategy
+import subprocess
+import json
+import uuid
+
+router = Router(name="download")
+logger = logging.getLogger(__name__)
+
+CONSENT_MSG = """
+🔗 <b>Ссылка распознана.</b>
+
+⚠️ <b>Политика использования:</b>
+Этот режим предназначен ТОЛЬКО для:
+• Ваших собственных материалов
+• Видео с разрешения автора
+• Материалов с открытой лицензией (CC)
+
+Подтверждаете наличие прав?
+""".strip()
+
+def format_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="MP4 1080p", callback_data="dl_fmt:best_1080"),
+            InlineKeyboardButton(text="MP4 720p", callback_data="dl_fmt:best_720")
+        ],
+        [
+            InlineKeyboardButton(text="MP4 480p", callback_data="dl_fmt:best_480"),
+            InlineKeyboardButton(text="MP3 320k", callback_data="dl_fmt:mp3_320")
+        ]
+    ])
+
+def mode_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📥 Только скачать", callback_data="dl_mode:raw"),
+            InlineKeyboardButton(text="🧹 Скачать + очистить", callback_data="dl_mode:clean")
+        ]
+    ])
+
+def consent_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Да, подтверждаю", callback_data="dl_consent:yes")],
+        [InlineKeyboardButton(text="Нет, отмена", callback_data="dl_consent:no")]
+    ])
+
+@router.message(F.text.startswith("/download"))
+async def download_command(message: Message):
+    await message.answer(
+        "🔗 Отправьте ссылку на видео.\n\n"
+        "Поддерживаю:\n"
+        "▸ YouTube  ▸ TikTok  ▸ Instagram\n"
+        "▸ Twitter/X  ▸ VK  ▸ Facebook\n\n"
+        "Или просто отправьте ссылку в чат."
+    )
+
+# Since bot/routers/youtube.py might conflict, ensure handlers are coordinated in main.py order.
+# We will catch all general links here assuming it's loaded appropriately.
+@router.message(F.text.regexp(r"https?://"))
+async def handle_any_url(message: Message, state: FSMContext, db_user: User):
+    url = message.text.strip()
+    platform = detect_platform(url)
+    
+    if platform == "unknown":
+        # Check if another handler might want it. If not:
+        await message.answer("❌ Платформа не поддерживается.")
+        return
+
+    # Prompt consent
+    await state.set_state("download:waiting_for_consent")
+    await state.update_data(dl_url=url, platform=platform)
+    await message.answer(CONSENT_MSG, parse_mode="HTML", reply_markup=consent_keyboard())
+
+
+@router.callback_query(F.data.startswith("dl_consent:"))
+async def dl_consent_cb(callback: CallbackQuery, state: FSMContext):
+    ans = callback.data.split(":")[1]
+    if ans == "no":
+        await state.clear()
+        await callback.message.edit_text("Отменено.")
+        return
+        
+    await callback.message.edit_text("⏳ Получаю информацию о видео...")
+    data = await state.get_data()
+    url = data.get("dl_url")
+    platform = data.get("platform")
+    
+    try:
+        cmd = ["yt-dlp", "--dump-json", "--no-playlist", "--quiet", url]
+        if platform == "youtube":
+            cmd.extend(["--js-runtimes", "node", "--extractor-args", "youtube:player_client=web,default"])
+            
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            await callback.message.edit_text("❌ Ошибка при получении информации.")
+            return
+            
+        info = json.loads(r.stdout)
+        title = info.get("title", "Video")
+        await state.update_data(dl_title=title)
+        
+        await state.set_state("download:waiting_for_format")
+        await callback.message.edit_text(f"🎥 <b>{title[:100]}</b>\n\nВыберите формат:", parse_mode="HTML", reply_markup=format_keyboard())
+    except Exception as e:
+        logger.error(f"yt-dlp info error: {e}")
+        await callback.message.edit_text("❌ Внутренняя ошибка.")
+
+
+@router.callback_query(F.data.startswith("dl_fmt:"))
+async def dl_format_cb(callback: CallbackQuery, state: FSMContext):
+    fmt = callback.data.split(":")[1]
+    await state.update_data(dl_format=fmt)
+    
+    await state.set_state("download:waiting_for_mode")
+    await callback.message.edit_text("Выберите режим обработки:", reply_markup=mode_keyboard())
+
+
+@router.callback_query(F.data.startswith("dl_mode:"))
+async def dl_mode_cb(callback: CallbackQuery, state: FSMContext, db_user: User):
+    mode = callback.data.split(":")[1]
+    clean = (mode == "clean")
+    
+    data = await state.get_data()
+    url = data.get("dl_url")
+    platform = data.get("platform")
+    fmt = data.get("dl_format")
+    title = data.get("dl_title")
+    
+    await state.clear()
+    
+    async with get_db_session() as session:
+        us = UserService(session)
+        user = await session.get(User, db_user.id)
+        if not await us.increment_daily_count(user, 5): # 5 limit hardcoded per specs
+            await callback.message.edit_text("⚠️ Достигнут дневной лимит скачиваний (5/день).")
+            return
+            
+        job_uuid = str(uuid.uuid4())
+        job = SiteDownloadJob(
+            uuid=job_uuid,
+            telegram_id=user.telegram_id,
+            platform=platform,
+            source_url=url,
+            format=fmt,
+            clean_metadata=clean,
+            original_title=title,
+            status=JobStatus.pending
+        )
+        session.add(job)
+        await session.commit()
+        
+        from workers.downloader_only import download_only_task
+        task = download_only_task.delay(job_uuid)
+        job.celery_task_id = task.id
+        await session.commit()
+
+    await callback.message.edit_text("⏳ Скачиваю... Это может занять несколько минут.\nРезультат придёт отдельным сообщением.")
+
+
+================================================================================
 FILE: bot\routers\errors.py
 ================================================================================
 import logging
@@ -2267,11 +2855,14 @@ async def error_handler(event: ErrorEvent) -> bool:
 FILE: bot\routers\start.py
 ================================================================================
 import logging
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
+from pathlib import Path
 
-from bot.keyboards.webapp import webapp_upload_keyboard
+from bot.keyboards.main_menu import webapp_upload_keyboard, get_main_menu_button
+from aiogram import Bot
+from aiogram.types import FSInputFile
 
 router = Router(name="start")
 logger = logging.getLogger(__name__)
@@ -2308,9 +2899,49 @@ HELP = """
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, bot: Bot):
+    # Set WebApp Menu Button
+    await bot.set_chat_menu_button(
+        chat_id=message.chat.id,
+        menu_button=get_main_menu_button()
+    )
+    
     kb = webapp_upload_keyboard()
-    await message.answer(WELCOME, parse_mode="HTML", reply_markup=kb)
+    
+    # Try to send onboarding banner if exists
+    banner_path = Path("static/banner.png")
+    if banner_path.exists():
+        await message.answer_photo(
+            photo=FSInputFile(str(banner_path)),
+            caption=WELCOME,
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+    else:
+        await message.answer(WELCOME, parse_mode="HTML", reply_markup=kb)
+
+@router.message(F.text == "🧹 Очистить видео")
+async def msg_clean_hint(message: Message):
+    await message.answer("📎 <b>Отправьте видео файлом</b> (без сжатия), чтобы я очистил его от метаданных.")
+
+@router.message(F.text == "📊 Моя статистика")
+async def msg_stats(message: Message):
+    from core.database import get_db_session
+    from core.services.user_service import UserService
+    async with get_db_session() as session:
+        us = UserService(session)
+        user, _ = await us.get_or_create(message.from_user.id)
+        # Assuming we might want to add more stats later
+        await message.answer(
+            f"📊 <b>Ваша статистика:</b>\n\n"
+            f"Задач за сегодня: <b>{user.daily_job_count}</b>\n"
+            f"Дата регистрации: <b>{user.created_at.strftime('%d.%m.%Y')}</b>",
+            parse_mode="HTML"
+        )
+
+@router.message(F.text == "❓ Помощь")
+async def msg_help_btn(message: Message):
+    await message.answer(HELP, parse_mode="HTML")
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
@@ -2415,8 +3046,8 @@ FILE: bot\routers\upload.py
 ================================================================================
 import logging, uuid
 from pathlib import Path
-from aiogram import Bot, Router
-from aiogram.types import Message
+from aiogram import Bot, Router, F
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from bot.filters.file_type import VideoFileFilter, UnsupportedFileFilter
 from core.config import settings
 from core.database import get_db_session
@@ -2443,6 +3074,7 @@ async def handle_video(message: Message, bot: Bot, db_user: User):
         user = await session.get(User, db_user.id)
         if not user:
             user, _ = await us.get_or_create(telegram_id=tg.id, username=tg.username, first_name=tg.first_name)
+        
         if message.document:
             fid = message.document.file_id
             fname = message.document.file_name or "video.mp4"
@@ -2451,6 +3083,7 @@ async def handle_video(message: Message, bot: Bot, db_user: User):
             fid = message.video.file_id
             fname = f"video_{message.video.file_unique_id}.mp4"
             fsize = message.video.file_size or 0
+            
         if fsize > max_bytes:
             await message.answer(
                 f"❌ Файл слишком большой.\nМаксимум: <b>{max_mb} МБ</b>\n"
@@ -2463,71 +3096,94 @@ async def handle_video(message: Message, bot: Bot, db_user: User):
                 f"Дождитесь завершения или введите /cancel.", parse_mode="HTML"); return
         if not await us.increment_daily_count(user, max_daily):
             await message.answer(f"⚠️ Дневной лимит задач исчерпан (<b>{max_daily}</b>/день).\nПопробуйте завтра.", parse_mode="HTML"); return
+        
         job = await js.create_job(user_id=user.id, source_type=SourceType.upload, original_filename=fname)
+        # Store file_id in job metadata or temporary storage if needed, but here we can just pass it via callback
         await session.commit()
-    status_msg = await message.answer(
-        f"✅ <b>Файл получен!</b>\n📋 Задача <code>#{job.uuid[:8]}</code>\n\n⏳ Скачиваю...", parse_mode="HTML")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🗑 Удалить метаданные", callback_data=f"confirm_clean:{job.uuid}:{fid}"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel_job:{job.uuid}")
+        ]
+    ])
+    
+    await message.answer(
+        f"📋 Задача <code>#{job.uuid[:8]}</code>\nФайл: <b>{fname}</b>\n\nЖелаете очистить метаданные?",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+@router.callback_query(F.data.startswith("confirm_clean:"))
+async def confirm_clean_cb(callback: CallbackQuery, bot: Bot):
+    parts = callback.data.split(":")
+    job_uuid = parts[1]
+    fid = parts[2]
+    
+    await callback.message.edit_text(
+        f"⏳ <b>Ставлю в очередь...</b>\n📋 Задача <code>#{job_uuid[:8]}</code>",
+        parse_mode="HTML"
+    )
+    
     try:
         settings.temp_upload_dir.mkdir(parents=True, exist_ok=True)
+        # We need the filename from the job
+        async with get_db_session() as session:
+            js = JobService(session)
+            job = await js.get_by_uuid(job_uuid)
+            fname = job.original_filename or "video.mp4"
+            
         ext = "." + fname.rsplit(".", 1)[-1].lower() if "." in fname else ".mp4"
         local = settings.temp_upload_dir / f"{uuid.uuid4()}{ext}"
+        
+        await callback.message.edit_text(
+            f"🔄 <b>Скачиваю видео...</b>\n📋 Задача <code>#{job_uuid[:8]}</code>",
+            parse_mode="HTML"
+        )
+        
         tg_file = await bot.get_file(fid)
         await bot.download_file(tg_file.file_path, destination=str(local))
+        
         async with get_db_session() as session:
             js2 = JobService(session)
-            job2 = await js2.get_by_uuid(job.uuid)
+            job2 = await js2.get_by_uuid(job_uuid)
             await js2.set_file_paths(job2, str(local), local.stat().st_size)
             await session.commit()
-    except Exception as e:
-        logger.error(f"Download from Telegram failed: {e}")
-        async with get_db_session() as session:
-            js2 = JobService(session)
-            job2 = await js2.get_by_uuid(job.uuid)
-            await js2.update_status(job2, JobStatus.failed, f"TG download failed: {e}")
-            await session.commit()
-        await status_msg.edit_text("❌ Не удалось скачать файл. Попробуйте ещё раз."); return
-    try:
+            
         from workers.video_processor import process_video_task
-        task = process_video_task.delay(job.uuid)
+        task = process_video_task.delay(job_uuid)
+        
         async with get_db_session() as session:
             js2 = JobService(session)
-            job2 = await js2.get_by_uuid(job.uuid)
+            job2 = await js2.get_by_uuid(job_uuid)
             await js2.set_celery_task_id(job2, task.id)
             await session.commit()
-        import redis.asyncio as aioredis
-        from core.config import settings
-        r = aioredis.from_url(str(settings.redis_url))
-        queue_len = await r.scard("active_processing_jobs")
-        await r.close()
-        queue_str = f" Задач перед вами: {queue_len}." if queue_len > 0 else ""
+            
+        await callback.message.edit_text(
+            f"🔄 <b>Очищаю метаданные...</b>\n📋 Задача <code>#{job_uuid[:8]}</code>",
+            parse_mode="HTML"
+        )
         
-        await status_msg.edit_text(
-            f"✅ <b>Файл получен!</b>\n📋 Задача <code>#{job.uuid[:8]}</code>\n\n"
-            f"🔄 В очереди на обработку.{queue_str} Результат отправлю как только будет готово.", parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Celery dispatch failed: {e}")
+        logger.error(f"Upload flow failed: {e}")
         async with get_db_session() as session:
             js2 = JobService(session)
-            us = UserService(session)
-            job2 = await js2.get_by_uuid(job.uuid)
+            job2 = await js2.get_by_uuid(job_uuid)
             if job2:
-                p = job2.temp_original_path
-                if p:
-                    try:
-                        Path(p).unlink(missing_ok=True)
-                    except OSError:
-                        pass
-                await js2.update_status(job2, JobStatus.failed, f"Queue dispatch failed: {e}")
-                u = await us.get_by_id(job2.user_id)
-                if u:
-                    await us.rollback_daily_job_increment(u)
+                await js2.update_status(job2, JobStatus.failed, str(e)[:200])
             await session.commit()
-        await status_msg.edit_text(
-            "❌ Не удалось поставить задачу в очередь. Попробуйте позже.\n"
-            "Проверьте /status — слот дня возвращён.",
-            parse_mode="HTML",
-        )
+        await callback.message.edit_text(f"❌ Ошибка: {e}")
 
+@router.callback_query(F.data.startswith("cancel_job:"))
+async def cancel_job_cb(callback: CallbackQuery):
+    job_uuid = callback.data.split(":")[1]
+    async with get_db_session() as session:
+        js = JobService(session)
+        job = await js.get_by_uuid(job_uuid)
+        if job:
+            await js.update_status(job, JobStatus.cancelled, "Cancelled by user")
+            await session.commit()
+    await callback.message.edit_text("❌ Задача отменена.")
 
 @router.message(UnsupportedFileFilter())
 async def handle_unsupported(message: Message):
@@ -2572,7 +3228,9 @@ CONSENT = """
 """.strip()
 
 
-@router.message(F.text.regexp(r"https?://").as_("url"))
+# Disabled the regex matcher since it is moved to download.py
+
+# @router.message(F.text.regexp(r"https?://").as_("url"))
 async def handle_url(message: Message, state: FSMContext, db_user: User):
     text = message.text or ""
     if not YT_RE.search(text):
@@ -2630,7 +3288,6 @@ async def consent_yes(callback: CallbackQuery, state: FSMContext, db_user: User)
             js2 = JobService(session); job2 = await js2.get_by_uuid(job.uuid)
             await js2.set_celery_task_id(job2, task.id); await session.commit()
         import redis.asyncio as aioredis
-        from core.config import settings
         r = aioredis.from_url(str(settings.redis_url))
         queue_len = await r.scard("active_processing_jobs")
         await r.close()
@@ -2776,6 +3433,9 @@ class Settings(BaseSettings):
     youtube_enabled: bool = True
     youtube_cookies_file: Optional[Path] = None
     youtube_cookies_admin_path: Path = Path("secrets/youtube_cookies.txt")
+    instagram_cookies_file: Optional[Path] = None
+    tiktok_cookies_file: Optional[Path] = None
+    facebook_cookies_file: Optional[Path] = None
     youtube_proxy: Optional[str] = None
     # Переопределить корень проекта (если воркер стартует не из каталога репозитория).
     metacleaner_root: Optional[Path] = None
@@ -2793,6 +3453,10 @@ class Settings(BaseSettings):
     public_base_url: Optional[str] = None
     # Лимит sendDocument в Bot API (~50 МБ); больше — только ссылка HTTP.
     telegram_bot_max_send_document_mb: int = Field(default=49, ge=1, le=2000)
+
+    # Nginx X-Accel-Redirect
+    use_x_accel_redirect: bool = False
+    x_accel_prefix: str = "/protected-media/"
     
     telegram_webhook_url: Optional[str] = None
     telegram_webhook_secret: Optional[str] = None
@@ -2976,9 +3640,26 @@ from sqlalchemy.types import JSON
 from core.database import Base
 
 
+class DownloadFormat(str, enum.Enum):
+    best_1080 = "best_1080"
+    best_720  = "best_720"
+    best_480  = "best_480"
+    best_360  = "best_360"
+    best_auto = "best_auto"
+    mp3_320   = "mp3_320"
+    mp3_192   = "mp3_192"
+    m4a_best  = "m4a_best"
+
+
 class SourceType(str, enum.Enum):
     upload = "upload"
     youtube = "youtube"
+
+
+class JobAction(str, enum.Enum):
+    clean = "clean"
+    extract_audio = "extract_audio"
+    screenshot = "screenshot"
 
 
 class JobStatus(str, enum.Enum):
@@ -3034,6 +3715,7 @@ class Job(Base):
     uuid: Mapped[str] = mapped_column(String(36), unique=True, nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     celery_task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    job_action: Mapped[JobAction] = mapped_column(Enum(JobAction), default=JobAction.clean, nullable=False)
     source_type: Mapped[SourceType] = mapped_column(Enum(SourceType), nullable=False)
     source_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     youtube_consent: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
@@ -3120,6 +3802,15 @@ class SystemLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
+class SponsorChannel(Base):
+    __tablename__ = "sponsor_channels"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class Setting(Base):
     __tablename__ = "settings"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -3129,6 +3820,58 @@ class Setting(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("admins.id"), nullable=True)
     updated_by_admin: Mapped[Optional["Admin"]] = relationship("Admin", back_populates="settings_updates")
+
+
+class SiteDownloadJob(Base):
+    __tablename__ = "site_download_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uuid: Mapped[str] = mapped_column(String(36), unique=True, nullable=False, index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    format: Mapped[str] = mapped_column(String(20), nullable=False)
+    clean_metadata: Mapped[bool] = mapped_column(Boolean, default=False)
+    original_title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    file_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_size_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.pending, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    celery_task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    cleanup_done: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+================================================================================
+FILE: core\platform_detect.py
+================================================================================
+import re
+
+def detect_platform(url: str) -> str:
+    url = url.lower()
+    if "youtube.com" in url or "youtu.be" in url:
+        return "youtube"
+    elif "tiktok.com" in url:
+        return "tiktok"
+    elif "instagram.com" in url:
+        return "instagram"
+    elif "twitter.com" in url or "x.com" in url:
+        return "twitter"
+    elif "vk.com/video" in url or "vk.com/clip" in url:
+        return "vk"
+    elif "facebook.com" in url or "fb.watch" in url:
+        return "facebook"
+    elif "vimeo.com" in url:
+        return "vimeo"
+    elif "dailymotion.com" in url:
+        return "dailymotion"
+    return "unknown"
+
+def is_supported_url(url: str) -> bool:
+    return detect_platform(url) != "unknown"
 
 
 ================================================================================
@@ -3690,6 +4433,153 @@ class UserService:
 
 
 ================================================================================
+FILE: deploy\setup.sh
+================================================================================
+#!/bin/bash
+# MetaCleaner — полная установка на чистый Ubuntu сервер
+# Запуск: bash deploy/setup.sh
+
+set -e
+echo "=== MetaCleaner Setup ==="
+
+# 1. Системные зависимости
+apt-get update
+apt-get install -y \
+    build-essential zlib1g-dev libncurses5-dev libgdbm-dev \
+    libnss3-dev libssl-dev libreadline-dev libffi-dev \
+    libsqlite3-dev wget libbz2-dev software-properties-common \
+    ffmpeg redis-server curl
+
+# 2. Node.js 20 (нужен для yt-dlp YouTube)
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+echo "Node.js: $(node --version)"
+
+# 3. Python 3.11 (если нет)
+if ! command -v python3.11 &> /dev/null; then
+    echo "Устанавливаем Python 3.11..."
+    cd /tmp
+    wget -q https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz
+    tar -xf Python-3.11.9.tgz
+    cd Python-3.11.9
+    ./configure --enable-optimizations --quiet
+    make -j$(nproc)
+    make altinstall
+    cd ~
+fi
+echo "Python: $(python3.11 --version)"
+
+# 4. Virtual environment
+cd /root/metacleaner_bot
+python3.11 -m venv .venv
+source .venv/bin/activate
+
+# 5. Python зависимости
+pip install --upgrade pip --quiet
+pip install bcrypt==4.0.1 --quiet  # фикс совместимости с passlib
+pip install -r requirements.txt --quiet
+pip install -U yt-dlp --quiet      # всегда свежая версия
+
+# 6. yt-dlp JS runtime скрипт
+mkdir -p ~/.config/yt-dlp
+curl -sL https://github.com/yt-dlp/yt-dlp/raw/master/yt_dlp/extractor/_ytdlp_youtube_ext.js \
+    -o ~/.config/yt-dlp/youtube_ext.js
+echo "yt-dlp: $(.venv/bin/yt-dlp --version)"
+
+# 7. .env из примера
+if [ ! -f .env ]; then
+    cp .env.example .env
+    echo "СОЗДАН .env — заполни BOT_TOKEN и ADMIN_SECRET_KEY!"
+fi
+
+# 8. Структура папок
+mkdir -p temp/uploads temp/processed logs secrets
+
+echo "=== Готово! ==="
+echo "Следующие шаги:"
+echo "1. nano .env  (заполни BOT_TOKEN и ADMIN_SECRET_KEY)"
+echo "2. source .venv/bin/activate"
+echo "3. python -m alembic upgrade head"
+echo "4. python scripts/seed_settings.py"
+echo "5. python scripts/create_admin.py"
+echo "6. bash deploy/systemd.sh"
+
+
+================================================================================
+FILE: deploy\systemd.sh
+================================================================================
+#!/bin/bash
+# Установка systemd сервисов для MetaCleaner
+
+PROJECT_DIR=/root/metacleaner_bot
+VENV=$PROJECT_DIR/.venv
+NODE_PATH=$(which node)
+
+# Бот
+cat > /etc/systemd/system/metacleaner-bot.service << EOF
+[Unit]
+Description=MetaCleaner Bot
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$PROJECT_DIR
+Environment="PATH=$VENV/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$VENV/bin/python -m bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Воркер
+cat > /etc/systemd/system/metacleaner-worker.service << EOF
+[Unit]
+Description=MetaCleaner Celery Worker
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$PROJECT_DIR
+Environment="PATH=$VENV/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$VENV/bin/celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Админка
+cat > /etc/systemd/system/metacleaner-admin.service << EOF
+[Unit]
+Description=MetaCleaner Admin Panel
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$PROJECT_DIR
+Environment="PATH=$VENV/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$VENV/bin/python -m admin
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable metacleaner-bot metacleaner-worker metacleaner-admin
+systemctl start metacleaner-bot metacleaner-worker metacleaner-admin
+systemctl status metacleaner-bot metacleaner-worker metacleaner-admin --no-pager
+echo "=== Сервисы запущены ==="
+
+
+================================================================================
 FILE: deploy\systemd\metacleaner-admin.service
 ================================================================================
 [Unit]
@@ -3949,6 +4839,102 @@ def downgrade():
     for t in ["settings","system_logs","broadcast_recipients","broadcasts",
               "job_reports","jobs","admins","users"]:
         op.drop_table(t)
+
+
+================================================================================
+FILE: migrations\versions\003_site_download_jobs.py
+================================================================================
+"""Add site_download_jobs table
+Revision ID: 003
+Revises: 001
+Create Date: 2026-04-09
+"""
+from alembic import op
+import sqlalchemy as sa
+
+revision = "003"
+down_revision = "001"
+branch_labels = None
+depends_on = None
+
+def upgrade():
+    op.create_table(
+        "site_download_jobs",
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("uuid", sa.String(36), unique=True, nullable=False, index=True),
+        sa.Column("telegram_id", sa.BigInteger, index=True, nullable=False),
+        sa.Column("ip_address", sa.String(64), index=True, nullable=True),
+        sa.Column("platform", sa.String(30), nullable=False),
+        sa.Column("source_url", sa.Text, nullable=False),
+        sa.Column("format", sa.String(20), nullable=False),
+        sa.Column("clean_metadata", sa.Boolean, default=False),
+        sa.Column("original_title", sa.String(500), nullable=True),
+        sa.Column("file_path", sa.Text, nullable=True),
+        sa.Column("file_size_bytes", sa.BigInteger, nullable=True),
+        sa.Column("status", sa.String(20), default="pending", nullable=False),
+        sa.Column("error_message", sa.Text, nullable=True),
+        sa.Column("celery_task_id", sa.String(255), nullable=True),
+        sa.Column("cleanup_done", sa.Boolean, default=False),
+        sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), index=True),
+        sa.Column("started_at", sa.DateTime, nullable=True),
+        sa.Column("completed_at", sa.DateTime, nullable=True),
+    )
+
+def downgrade():
+    op.drop_table("site_download_jobs")
+
+
+================================================================================
+FILE: migrations\versions\004_sponsor_channels.py
+================================================================================
+"""Add sponsor_channels table
+Revision ID: 004
+Revises: 003
+Create Date: 2026-04-09
+"""
+from alembic import op
+import sqlalchemy as sa
+
+revision = "004"
+down_revision = "003"
+branch_labels = None
+depends_on = None
+
+def upgrade():
+    op.create_table(
+        "sponsor_channels",
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("channel_id", sa.BigInteger, unique=True, nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("url", sa.String(255), nullable=False),
+        sa.Column("is_active", sa.Boolean, default=True),
+    )
+
+def downgrade():
+    op.drop_table("sponsor_channels")
+
+
+================================================================================
+FILE: migrations\versions\005_job_action.py
+================================================================================
+"""Add job_action to jobs
+Revision ID: 005
+Revises: 004
+Create Date: 2026-04-09
+"""
+from alembic import op
+import sqlalchemy as sa
+
+revision = "005"
+down_revision = "004"
+branch_labels = None
+depends_on = None
+
+def upgrade():
+    op.add_column("jobs", sa.Column("job_action", sa.String(20), server_default="clean", nullable=False))
+
+def downgrade():
+    op.drop_column("jobs", "job_action")
 
 
 ================================================================================
@@ -4857,6 +5843,51 @@ async def test_cancel_job(db_session):
 
 
 ================================================================================
+FILE: tests\test_platform_detect.py
+================================================================================
+import pytest
+from core.platform_detect import detect_platform, is_supported_url
+
+def test_detect_youtube():
+    assert detect_platform("https://www.youtube.com/watch?v=dQw4w9WgXcQ") == "youtube"
+    assert detect_platform("https://youtu.be/dQw4w9WgXcQ") == "youtube"
+    assert detect_platform("https://youtube.com/shorts/some_id") == "youtube"
+
+def test_detect_tiktok():
+    assert detect_platform("https://www.tiktok.com/@user/video/1234567890") == "tiktok"
+    assert detect_platform("https://vm.tiktok.com/ZSdfasdf/") == "tiktok"
+
+def test_detect_instagram():
+    assert detect_platform("https://www.instagram.com/reel/abcdefg/") == "instagram"
+    assert detect_platform("https://instagram.com/p/abcdefg/") == "instagram"
+
+def test_detect_twitter():
+    assert detect_platform("https://twitter.com/user/status/1234567890") == "twitter"
+    assert detect_platform("https://x.com/user/status/1234567890") == "twitter"
+
+def test_detect_vk():
+    assert detect_platform("https://vk.com/video-12345_67890") == "vk"
+    assert detect_platform("https://vk.com/clip-123_456") == "vk"
+
+def test_detect_facebook():
+    assert detect_platform("https://www.facebook.com/watch/?v=1234567890") == "facebook"
+    assert detect_platform("https://fb.watch/abcdefg/") == "facebook"
+
+def test_detect_vimeo():
+    assert detect_platform("https://vimeo.com/123456789") == "vimeo"
+
+def test_detect_dailymotion():
+    assert detect_platform("https://www.dailymotion.com/video/x7abcde") == "dailymotion"
+
+def test_detect_unknown():
+    assert detect_platform("https://example.com/video.mp4") == "unknown"
+
+def test_is_supported_url():
+    assert is_supported_url("https://youtu.be/abc") == True
+    assert is_supported_url("https://example.com") == False
+
+
+================================================================================
 FILE: tests\test_telegram_html.py
 ================================================================================
 import pytest
@@ -5258,13 +6289,18 @@ FILE: webapp\routes.py
 import logging
 import re
 import uuid
+import json
+import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Optional
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from core.config import settings
 from core.constants import SUPPORTED_VIDEO_EXTENSIONS
@@ -5275,6 +6311,8 @@ from core.services.settings_service import SettingsService
 from core.services.user_service import UserService
 from webapp.result_token import parse_result_download_token
 from webapp.tg_init_data import telegram_user_id, validate_webapp_init_data
+from core.models import SiteDownloadJob, JobStatus, DownloadFormat
+from core.platform_detect import detect_platform, is_supported_url
 
 logger = logging.getLogger(__name__)
 
@@ -5488,6 +6526,162 @@ async def webapp_job_status(
     }
 
 
+class DownloadInfoRequest(BaseModel):
+    url: str
+
+class DownloadStartRequest(BaseModel):
+    url: str
+    format: str
+    clean_metadata: bool
+
+@router.post("/api/webapp/download/info")
+async def download_info(
+    req: DownloadInfoRequest, 
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None
+):
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=401, detail="missing_init_data")
+    url = req.url
+    platform = detect_platform(url)
+    if platform == "unknown":
+        return JSONResponse({"supported": False}, status_code=400)
+    
+    try:
+        from core.config import settings
+        cmd = ["yt-dlp", "--dump-json", "--no-playlist", "--quiet", url]
+        if platform == "youtube":
+            cmd.extend(["--js-runtimes", "node", "--extractor-args", "youtube:player_client=web,default"])
+            
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return JSONResponse({"error": "Failed to get info", "details": r.stderr[:200]}, status_code=400)
+            
+        info = json.loads(r.stdout)
+        
+        formats = [
+            {"id": "best_1080", "label": "MP4 1080p", "ext": "mp4"},
+            {"id": "best_720",  "label": "MP4 720p",  "ext": "mp4"},
+            {"id": "best_480",  "label": "MP4 480p",  "ext": "mp4"},
+            {"id": "best_360",  "label": "MP4 360p",  "ext": "mp4"},
+            {"id": "best_auto", "label": "MP4 Auto",  "ext": "mp4"},
+            {"id": "mp3_320",   "label": "MP3 320kbps", "ext": "mp3"},
+            {"id": "mp3_192",   "label": "MP3 192kbps", "ext": "mp3"},
+            {"id": "m4a_best",  "label": "M4A Best",  "ext": "m4a"}
+        ]
+        
+        return {
+            "platform": platform,
+            "title": info.get("title", "Unknown Title"),
+            "duration_sec": info.get("duration", 0),
+            "thumbnail": info.get("thumbnail"),
+            "formats": formats,
+            "supported": True
+        }
+    except Exception as e:
+        logger.error(f"Failed getting download info: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@router.post("/api/webapp/download/start")
+async def download_start(
+    req: DownloadStartRequest,
+    session: AsyncSession = Depends(get_db),
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None
+):
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=401, detail="missing_init_data")
+    tg_id = telegram_user_id(x_telegram_init_data.strip(), settings.bot_token)
+    if tg_id is None:
+        raise HTTPException(status_code=401, detail="invalid_init_data")
+        
+    url = req.url
+    platform = detect_platform(url)
+    if platform == "unknown":
+        raise HTTPException(status_code=400, detail="Unsupported platform")
+        
+    today = datetime.utcnow().date()
+    stmt = select(SiteDownloadJob).where(
+        SiteDownloadJob.telegram_id == tg_id,
+        SiteDownloadJob.created_at >= datetime(today.year, today.month, today.day)
+    )
+    result = await session.execute(stmt)
+    today_count = len(result.scalars().all())
+    
+    if today_count >= 5:
+        raise HTTPException(status_code=429, detail="Daily limit of 5 downloads reached")
+
+    job_uuid = str(uuid.uuid4())
+    job = SiteDownloadJob(
+        uuid=job_uuid,
+        telegram_id=tg_id,
+        platform=platform,
+        source_url=url,
+        format=req.format,
+        clean_metadata=req.clean_metadata,
+        status=JobStatus.pending
+    )
+    session.add(job)
+    await session.commit()
+    
+    from workers.downloader_only import download_only_task
+    task = download_only_task.delay(job_uuid)
+    
+    job.celery_task_id = task.id
+    await session.commit()
+    
+    return {"job_id": job_uuid, "platform": platform}
+
+@router.get("/api/webapp/download/job/{job_id}")
+async def get_download_job(
+    job_id: str, 
+    session: AsyncSession = Depends(get_db),
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None
+):
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=401, detail="missing_init_data")
+    tg_id = telegram_user_id(x_telegram_init_data.strip(), settings.bot_token)
+    if tg_id is None:
+        raise HTTPException(status_code=401, detail="invalid_init_data")
+        
+    stmt = select(SiteDownloadJob).where(SiteDownloadJob.uuid == job_id, SiteDownloadJob.telegram_id == tg_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    return {
+        "uuid": job.uuid,
+        "status": job.status,
+        "platform": job.platform,
+        "title": job.original_title or "Video",
+        "file_size_bytes": job.file_size_bytes,
+        "download_url": f"/api/webapp/download/result/{job.uuid}",
+        "expires_in_minutes": 30
+    }
+
+@router.get("/api/webapp/download/result/{job_id}")
+async def download_result(
+    job_id: str, 
+    session: AsyncSession = Depends(get_db),
+    t: Annotated[Optional[str], Query(description="Signed token")] = None,
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None,
+):
+    tg_id = _resolve_result_telegram_id(job_id, t, x_telegram_init_data)
+    
+    stmt = select(SiteDownloadJob).where(SiteDownloadJob.uuid == job_id, SiteDownloadJob.telegram_id == tg_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    
+    if not job or job.status != JobStatus.done or not job.file_path:
+        raise HTTPException(status_code=404, detail="File not ready or not found")
+        
+    path = Path(job.file_path)
+    if not path.exists():
+        raise HTTPException(status_code=410, detail="File deleted or not found")
+        
+    return FileResponse(path, filename=path.name)
+
+
 def _resolve_result_telegram_id(
     job_uuid: str,
     t: Optional[str],
@@ -5533,8 +6727,9 @@ async def webapp_download_result(
     return FileResponse(
         path,
         filename=fn,
-        media_type="application/octet-stream",
-    )
+    media_type="application/octet-stream",
+    headers={"X-Accel-Redirect": f"{settings.x_accel_prefix}{path.name}"} if settings.use_x_accel_redirect else None
+)
 
 
 ================================================================================
@@ -6018,44 +7213,52 @@ FILE: webapp\static\app.js
 
   // --- Tabs ---
   const tabUpload = document.getElementById("tab-upload");
+  const tabDownload = document.getElementById("tab-download");
   const tabHistory = document.getElementById("tab-history");
   const contentUpload = document.getElementById("upload-tab-content");
+  const contentDownload = document.getElementById("download-tab-content");
   const contentHistory = document.getElementById("history-tab-content");
   const historyList = document.getElementById("history-list");
   const btnRefreshHistory = document.getElementById("btn-refresh-history");
 
+  function resetTabs() {
+      if(tabUpload) { tabUpload.classList.remove("active"); tabUpload.style.borderBottomColor = "transparent"; tabUpload.style.color = "var(--tg-theme-hint-color, #888)"; }
+      if(tabDownload) { tabDownload.classList.remove("active"); tabDownload.style.borderBottomColor = "transparent"; tabDownload.style.color = "var(--tg-theme-hint-color, #888)"; }
+      if(tabHistory) { tabHistory.classList.remove("active"); tabHistory.style.borderBottomColor = "transparent"; tabHistory.style.color = "var(--tg-theme-hint-color, #888)"; }
+      if(contentUpload) contentUpload.style.display = "none";
+      if(contentDownload) contentDownload.style.display = "none";
+      if(contentHistory) contentHistory.style.display = "none";
+  }
+
   function switchTab(tab) {
+    resetTabs();
     if (tab === "upload") {
       if (tabUpload) {
         tabUpload.classList.add("active");
         tabUpload.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
         tabUpload.style.color = "var(--tg-theme-text-color, #000)";
       }
-      if (tabHistory) {
-        tabHistory.classList.remove("active");
-        tabHistory.style.borderBottomColor = "transparent";
-        tabHistory.style.color = "var(--tg-theme-hint-color, #888)";
-      }
       if (contentUpload) contentUpload.style.display = "block";
-      if (contentHistory) contentHistory.style.display = "none";
+    } else if (tab === "download") {
+      if (tabDownload) {
+        tabDownload.classList.add("active");
+        tabDownload.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
+        tabDownload.style.color = "var(--tg-theme-text-color, #000)";
+      }
+      if (contentDownload) contentDownload.style.display = "block";
     } else {
       if (tabHistory) {
         tabHistory.classList.add("active");
         tabHistory.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
         tabHistory.style.color = "var(--tg-theme-text-color, #000)";
       }
-      if (tabUpload) {
-        tabUpload.classList.remove("active");
-        tabUpload.style.borderBottomColor = "transparent";
-        tabUpload.style.color = "var(--tg-theme-hint-color, #888)";
-      }
       if (contentHistory) contentHistory.style.display = "block";
-      if (contentUpload) contentUpload.style.display = "none";
       loadHistory();
     }
   }
   
   if (tabUpload) tabUpload.addEventListener("click", () => switchTab("upload"));
+  if (tabDownload) tabDownload.addEventListener("click", () => switchTab("download"));
   if (tabHistory) tabHistory.addEventListener("click", () => switchTab("history"));
   if (btnRefreshHistory) btnRefreshHistory.addEventListener("click", loadHistory);
   
@@ -6287,8 +7490,162 @@ FILE: webapp\static\app.js
   });
 })();
 
-window.downloadResult = async function(jobUuid, idata) {
-  const r = await fetch("/api/webapp/result/" + encodeURIComponent(jobUuid), {
+let downloadJobUuid = null;
+let downloadPollInterval = null;
+
+const dlUrlInput = document.getElementById('download-url');
+const btnGetInfo = document.getElementById('btn-get-info');
+const btnStartDownload = document.getElementById('btn-start-download');
+const dlStep1 = document.getElementById('download-step-1');
+const dlStep2 = document.getElementById('download-step-2');
+const dlStep3 = document.getElementById('download-step-3');
+const dlStep4 = document.getElementById('download-step-4');
+
+if (btnGetInfo) {
+    btnGetInfo.addEventListener('click', async () => {
+        const url = dlUrlInput.value.trim();
+        if (!url) return;
+        
+        btnGetInfo.disabled = true;
+        btnGetInfo.textContent = "Получение...";
+        
+        try {
+            const resp = await fetch('/api/webapp/download/info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Telegram-Init-Data': initData()
+                },
+                body: JSON.stringify({ url })
+            });
+            
+            const data = await resp.json();
+            
+            if (!resp.ok || !data.supported) {
+                alert(data.error || "Платформа не поддерживается или произошла ошибка.");
+                btnGetInfo.disabled = false;
+                btnGetInfo.textContent = "Получить информацию";
+                return;
+            }
+            
+            document.getElementById('dl-thumb').src = data.thumbnail || '';
+            document.getElementById('dl-title').textContent = data.title;
+            
+            const min = Math.floor(data.duration_sec / 60);
+            const sec = data.duration_sec % 60;
+            document.getElementById('dl-platform').textContent = `${data.platform.toUpperCase()} • ${min}:${sec.toString().padStart(2, '0')}`;
+            
+            const formatSelect = document.getElementById('dl-format');
+            formatSelect.innerHTML = '';
+            data.formats.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f.id;
+                opt.textContent = f.label;
+                formatSelect.appendChild(opt);
+            });
+            
+            dlStep1.style.display = 'none';
+            dlStep2.style.display = 'block';
+        } catch (e) {
+            alert("Ошибка сети");
+        }
+        
+        btnGetInfo.disabled = false;
+        btnGetInfo.textContent = "Получить информацию";
+    });
+}
+
+if (document.getElementById('btn-dl-back')) {
+    document.getElementById('btn-dl-back').addEventListener('click', () => {
+        dlStep2.style.display = 'none';
+        dlStep1.style.display = 'block';
+    });
+}
+
+if (btnStartDownload) {
+    btnStartDownload.addEventListener('click', async () => {
+        const url = dlUrlInput.value.trim();
+        const format = document.getElementById('dl-format').value;
+        const clean_metadata = document.getElementById('dl-clean-metadata').checked;
+        
+        dlStep2.style.display = 'none';
+        dlStep3.style.display = 'block';
+        
+        try {
+            const resp = await fetch('/api/webapp/download/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Telegram-Init-Data': initData()
+                },
+                body: JSON.stringify({ url, format, clean_metadata })
+            });
+            
+            const data = await resp.json();
+            
+            if (!resp.ok) {
+                alert(data.detail || "Ошибка");
+                dlStep3.style.display = 'none';
+                dlStep2.style.display = 'block';
+                return;
+            }
+            
+            downloadJobUuid = data.job_id;
+            pollDownloadJob();
+        } catch (e) {
+            alert("Ошибка сети");
+            dlStep3.style.display = 'none';
+            dlStep2.style.display = 'block';
+        }
+    });
+}
+
+function pollDownloadJob() {
+    if (downloadPollInterval) clearInterval(downloadPollInterval);
+    
+    downloadPollInterval = setInterval(async () => {
+        try {
+            const resp = await fetch(`/api/webapp/download/job/${downloadJobUuid}`, {
+                headers: { 'X-Telegram-Init-Data': initData() }
+            });
+            
+            if (resp.ok) {
+                const data = await resp.json();
+                
+                if (data.status === 'done') {
+                    clearInterval(downloadPollInterval);
+                    dlStep3.style.display = 'none';
+                    dlStep4.style.display = 'block';
+                    
+                    const btnDlFile = document.getElementById('btn-download-file');
+                    btnDlFile.onclick = (e) => {
+                        e.preventDefault();
+                        window.downloadResult(downloadJobUuid, initData(), true, data.title);
+                    };
+                } else if (data.status === 'failed' || data.status === 'cancelled') {
+                    clearInterval(downloadPollInterval);
+                    alert("Ошибка скачивания: " + data.status);
+                    dlStep3.style.display = 'none';
+                    dlStep1.style.display = 'block';
+                }
+            }
+        } catch (e) {
+            // ignore temp errors
+        }
+    }, 3000);
+}
+
+if (document.getElementById('btn-dl-again')) {
+    document.getElementById('btn-dl-again').addEventListener('click', () => {
+        dlUrlInput.value = '';
+        dlStep4.style.display = 'none';
+        dlStep1.style.display = 'block';
+    });
+}
+
+window.downloadResult = async function(jobUuid, idata, isSiteDownload = false, customTitle = null) {
+  const endpoint = isSiteDownload ? `/api/webapp/download/result/` : `/api/webapp/result/`;
+  const r = await fetch(endpoint + encodeURIComponent(jobUuid), {
     headers: { "X-Telegram-Init-Data": idata },
   });
   if (!r.ok) {
@@ -6309,7 +7666,16 @@ window.downloadResult = async function(jobUuid, idata) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "video_clean.mp4";
+  let filename = customTitle ? customTitle + ".mp4" : "video_clean.mp4";
+  const cd = r.headers.get("Content-Disposition");
+  if (cd) {
+    const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+    if (m) {
+      try { filename = decodeURIComponent(m[1].trim()); }
+      catch (_) { filename = m[1].trim(); }
+    }
+  }
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 };
@@ -6334,7 +7700,63 @@ FILE: webapp\templates\index.html
       <p class="lead">Загрузите видео <b>напрямую на сервер</b> — удобно для крупных файлов, которые неудобно слать через чат бота.</p>
       <div class="tabs" style="display:flex;margin-bottom:1rem;gap:10px;border-bottom:1px solid var(--tg-theme-hint-color, #ccc);">
         <button type="button" class="tab-btn active" id="tab-upload" style="background:none;border:none;padding:10px;cursor:pointer;color:var(--tg-theme-text-color, #000);border-bottom:2px solid var(--tg-theme-button-color, #3b82f6);font-weight:600;">Очистка</button>
+        <button type="button" class="tab-btn" id="tab-download" style="background:none;border:none;padding:10px;cursor:pointer;color:var(--tg-theme-hint-color, #888);font-weight:600;">Скачать</button>
         <button type="button" class="tab-btn" id="tab-history" style="background:none;border:none;padding:10px;cursor:pointer;color:var(--tg-theme-hint-color, #888);font-weight:600;">Мои файлы</button>
+      </div>
+
+      <div id="download-tab-content" style="display: none;">
+          <div id="download-step-1">
+              <input type="url" id="download-url" placeholder="Вставьте ссылку YouTube, TikTok, Instagram..." style="width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc;">
+              <div style="font-size: 1.5rem; text-align: center; margin-bottom: 15px; letter-spacing: 10px;">
+                  <span title="YouTube">📺</span>
+                  <span title="TikTok">🎵</span>
+                  <span title="Instagram">📸</span>
+                  <span title="Twitter/X">🐦</span>
+                  <span title="VK">📘</span>
+                  <span title="Facebook">👥</span>
+              </div>
+              <button id="btn-get-info" class="btn btn-primary" style="width: 100%;">Получить информацию</button>
+          </div>
+
+          <div id="download-step-2" style="display: none; margin-top: 15px;">
+              <div style="text-align: center; margin-bottom: 15px;">
+                  <img id="dl-thumb" src="" alt="Thumbnail" style="max-width: 100%; border-radius: 8px; margin-bottom: 10px; max-height: 200px; object-fit: cover;">
+                  <h3 id="dl-title" style="font-size: 14px; margin-bottom: 5px;">Название видео</h3>
+                  <p id="dl-platform" style="font-size: 12px; color: var(--tg-theme-hint-color, #888); margin-bottom: 15px;">YouTube • 00:00</p>
+              </div>
+              
+              <div style="margin-bottom: 15px;">
+                  <label style="display:block; margin-bottom:5px; font-weight:bold; font-size: 0.9rem;">Выберите формат:</label>
+                  <select id="dl-format" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc;"></select>
+              </div>
+              
+              <div style="margin-bottom: 20px;">
+                  <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer;">
+                      <input type="checkbox" id="dl-clean-metadata" style="transform: scale(1.2);">
+                      Очистить метаданные (удалить GPS, дату и др.)
+                  </label>
+              </div>
+              
+              <button id="btn-start-download" class="btn btn-primary" style="width: 100%; margin-bottom: 10px;">Скачать</button>
+              <button id="btn-dl-back" class="btn btn-ghost" style="width: 100%;">Назад</button>
+          </div>
+
+          <div id="download-step-3" style="display: none; margin-top: 15px; text-align: center;">
+              <div class="loader" style="margin: 20px auto; border: 4px solid #f3f3f3; border-top: 4px solid var(--tg-theme-button-color, #3b82f6); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite;"></div>
+              <p id="dl-status-text" style="font-weight: 500;">Получаем информацию...</p>
+              <div style="margin-top: 30px; padding: 30px 10px; border: 2px dashed var(--tg-theme-hint-color, #ccc); color: var(--tg-theme-hint-color, #888); border-radius: 8px; font-size: 0.9rem;">
+                  Рекламный блок (место под баннер)
+              </div>
+          </div>
+
+          <div id="download-step-4" style="display: none; margin-top: 15px; text-align: center;">
+              <div style="font-size: 40px; color: #10b981; margin-bottom: 10px;">✅</div>
+              <h3 style="margin-bottom: 10px;">Готово!</h3>
+              <p style="font-size: 0.85rem; color: #ef4444; margin-bottom: 20px;">Файл будет удалён через 30 минут</p>
+              
+              <a id="btn-download-file" href="#" target="_blank" class="btn btn-primary" style="display: block; margin-bottom: 10px; text-decoration: none;">Скачать файл</a>
+              <button id="btn-dl-again" class="btn btn-ghost" style="width: 100%;">Скачать ещё</button>
+          </div>
       </div>
 
       <div id="upload-tab-content">
@@ -6556,6 +7978,7 @@ app.config_from_object({
         "workers.cleanup.cleanup_job_files_task":     {"queue": "cleanup"},
         "workers.cleanup.periodic_cleanup_task":      {"queue": "cleanup"},
         "workers.broadcast.send_broadcast_chunk_task":{"queue": "broadcast"},
+        "workers.downloader_only.download_only_task": {"queue": "video"},
     },
     "task_default_queue": "video",
     "task_acks_late": True,
@@ -6571,7 +7994,8 @@ app.config_from_object({
     },
 })
 app.autodiscover_tasks(["workers.video_processor","workers.downloader",
-                        "workers.sender","workers.cleanup","workers.broadcast"])
+                        "workers.sender","workers.cleanup","workers.broadcast",
+                        "workers.downloader_only"])
 
 
 ================================================================================
@@ -6704,7 +8128,9 @@ def download_youtube_video(url, output_dir, cookies_path: Optional[Path], proxy:
     template = str(output_dir / f"{name}.%(ext)s")
     extra = _yt_dlp_extra_args(cookies_path, proxy)
     info_r = subprocess.run(
-        ["yt-dlp", *extra, "--dump-json", "--no-playlist", "--quiet", url],
+        ["yt-dlp", "--js-runtimes", "node",
+         "--extractor-args", "youtube:player_client=web,default",
+         *extra, "--dump-json", "--no-playlist", "--quiet", url],
         capture_output=True, text=True, timeout=30,
     )
     if info_r.returncode != 0: raise InvalidYouTubeURLError(f"Cannot access: {info_r.stderr[:200]}")
@@ -6720,7 +8146,9 @@ def download_youtube_video(url, output_dir, cookies_path: Optional[Path], proxy:
         title = "video"
     dl_r = subprocess.run(
         [
-            "yt-dlp", *extra, "--no-playlist", "--format",
+            "yt-dlp", "--js-runtimes", "node",
+            "--extractor-args", "youtube:player_client=web,default",
+            *extra, "--no-playlist", "--format",
             "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]",
             "--merge-output-format", "mp4", "--output", template, "--no-progress", "--quiet", url,
         ],
@@ -6792,6 +8220,149 @@ def download_youtube_task(self, job_uuid):
                 logger.exception(f"Download error job {job_uuid}")
                 await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
                 raise self.retry(exc=e)
+    return asyncio.run(_run())
+
+
+================================================================================
+FILE: workers\downloader_only.py
+================================================================================
+import asyncio
+import logging
+import subprocess
+import uuid
+from pathlib import Path
+from typing import Optional
+
+from core.config import settings
+from core.database import get_db_session
+from core.models import SiteDownloadJob, JobStatus, DownloadFormat
+from workers.celery_app import app
+
+logger = logging.getLogger(__name__)
+
+def get_cookies_for_platform(platform: str) -> Optional[Path]:
+    if platform == "youtube":
+        from core.youtube_cookies import resolve_youtube_dl_cookies_and_proxy
+        # Since it's async, we might need a workaround or we handle it in async scope.
+        return None  # Handle async resolution explicitly
+    elif platform == "instagram":
+        return settings.instagram_cookies_file
+    elif platform == "tiktok":
+        return settings.tiktok_cookies_file
+    elif platform == "facebook":
+        return settings.facebook_cookies_file
+    return None
+
+def get_format_args(format_enum: str) -> list:
+    format_map = {
+        DownloadFormat.best_1080: ["--format", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]"],
+        DownloadFormat.best_720:  ["--format", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]"],
+        DownloadFormat.best_480:  ["--format", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]"],
+        DownloadFormat.best_360:  ["--format", "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]"],
+        DownloadFormat.best_auto: ["--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"],
+        DownloadFormat.mp3_320:   ["--format", "bestaudio", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0"],
+        DownloadFormat.mp3_192:   ["--format", "bestaudio", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "5"],
+        DownloadFormat.m4a_best:  ["--format", "bestaudio[ext=m4a]/bestaudio", "--merge-output-format", "m4a"],
+    }
+    return format_map.get(format_enum, ["--format", "best"])
+
+def get_extension(format_enum: str) -> str:
+    if format_enum in [DownloadFormat.mp3_320, DownloadFormat.mp3_192]:
+        return "mp3"
+    elif format_enum == DownloadFormat.m4a_best:
+        return "m4a"
+    return "mp4"
+
+@app.task(name="workers.downloader_only.download_only_task", queue="video")
+def download_only_task(job_uuid: str):
+    async def _run():
+        async with get_db_session() as session:
+            from sqlalchemy import select
+            result = await session.execute(select(SiteDownloadJob).where(SiteDownloadJob.uuid == job_uuid))
+            job = result.scalar_one_or_none()
+            
+            if not job or job.status == JobStatus.cancelled:
+                return {"status": "cancelled or not found"}
+            
+            job.status = JobStatus.downloading
+            await session.commit()
+
+            try:
+                settings.temp_upload_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Fetch cookies
+                cookies_path = None
+                proxy = None
+                if job.platform == "youtube":
+                    from core.youtube_cookies import resolve_youtube_dl_cookies_and_proxy
+                    cookies_path, proxy = await resolve_youtube_dl_cookies_and_proxy()
+                else:
+                    cookies_path = get_cookies_for_platform(job.platform)
+
+                # Prepare yt-dlp arguments
+                name = str(uuid.uuid4())
+                ext = get_extension(job.format)
+                template = str(settings.temp_upload_dir / f"{name}.%(ext)s")
+                
+                cmd = ["yt-dlp", "--no-playlist"]
+                
+                if cookies_path:
+                    cmd.extend(["--cookies", str(cookies_path)])
+                if proxy:
+                    cmd.extend(["--proxy", proxy])
+                if job.platform == "youtube":
+                    cmd.extend(["--js-runtimes", "node", "--extractor-args", "youtube:player_client=web,default"])
+                
+                cmd.extend(get_format_args(job.format))
+                if ext == "mp4":
+                    cmd.extend(["--merge-output-format", "mp4"])
+                
+                cmd.extend(["--output", template, "--quiet", "--no-warnings", job.source_url])
+                
+                logger.info(f"Running yt-dlp for job {job_uuid}: {' '.join(cmd)}")
+                
+                dl_r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                if dl_r.returncode != 0:
+                    raise Exception(f"yt-dlp failed: {dl_r.stderr[:300]}")
+                
+                files = list(settings.temp_upload_dir.glob(f"{name}.*"))
+                if not files:
+                    raise Exception("Downloaded file not found")
+                
+                downloaded_file = files[0]
+                final_file = downloaded_file
+                
+                # Strip metadata if requested
+                if job.clean_metadata:
+                    settings.temp_processed_dir.mkdir(parents=True, exist_ok=True)
+                    clean_file = settings.temp_processed_dir / f"{name}_clean{downloaded_file.suffix}"
+                    ffmpeg_cmd = [
+                        "ffmpeg", "-y", "-i", str(downloaded_file),
+                        "-map", "0", "-c", "copy",
+                        "-map_metadata", "-1",
+                        str(clean_file)
+                    ]
+                    ff_r = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=600)
+                    if ff_r.returncode != 0:
+                        raise Exception(f"FFmpeg failed: {ff_r.stderr[:300]}")
+                    
+                    downloaded_file.unlink(missing_ok=True)
+                    final_file = clean_file
+                
+                # Update job success
+                job.file_path = str(final_file)
+                job.file_size_bytes = final_file.stat().st_size
+                job.status = JobStatus.done
+                await session.commit()
+                return {"status": "done"}
+                
+            except Exception as e:
+                logger.exception(f"Download failed for {job_uuid}")
+                job.status = JobStatus.failed
+                job.error_message = str(e)[:500]
+                await session.commit()
+                return {"error": str(e)}
+
     return asyncio.run(_run())
 
 
@@ -7030,9 +8601,34 @@ def strip_metadata(input_path, output_path):
         raise FFmpegError(-1, "FFmpeg timed out")
 
 
-def get_output_path(input_path):
+def get_output_path(input_path, action="clean"):
     ext = Path(input_path).suffix.lower()
+    u = uuid.uuid4()
+    if action == "extract_audio":
+        return str(settings.temp_processed_dir / f"{u}_audio.mp3")
+    elif action == "screenshot":
+        return str(settings.temp_processed_dir / f"{u}_thumb.jpg")
     return str(settings.temp_processed_dir / f"{uuid.uuid4()}_clean{ext}")
+
+def run_ffmpeg_action(input_path, output_path, action="clean"):
+    if action == "extract_audio":
+        # Extract audio to MP3 192k
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-vn", "-acodec", "libmp3lame", "-ab", "192k", output_path]
+    elif action == "screenshot":
+        # Take a screenshot at 1 second mark (or 0)
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-ss", "00:00:01", "-vframes", "1", output_path]
+    else:
+        # Default clean
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-map_metadata", "-1", "-map_chapters", "-1",
+               "-c", "copy", "-movflags", "+faststart", output_path]
+               
+    logger.info(f"FFmpeg ({action}): {' '.join(cmd)}")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if r.returncode != 0: raise FFmpegError(r.returncode, r.stderr)
+        return True, r.stderr
+    except subprocess.TimeoutExpired:
+        raise FFmpegError(-1, "FFmpeg timed out")
 
 
 @app.task(name="workers.video_processor.process_video_task", bind=True, max_retries=2, default_retry_delay=30, queue="video")
@@ -7052,36 +8648,23 @@ def process_video_task(self, job_uuid):
                 await session.commit()
                 return {"error": "missing"}
                 
-            import redis.asyncio as aioredis
-            from core.services.settings_service import SettingsService
-            ss = SettingsService(session)
-            max_concurrent = int(await ss.get("max_concurrent_jobs", settings.max_concurrent_jobs))
-            r = aioredis.from_url(str(settings.redis_url))
-            active_count = await r.scard("active_processing_jobs")
-            
-            if active_count >= max_concurrent:
-                await session.commit()
-                await r.close()
-                raise self.retry(countdown=10)
-                
             began = await svc.try_begin_video_processing(job_uuid)
             if not began:
                 await session.commit()
-                await r.close()
                 job2 = await svc.get_by_uuid(job_uuid)
                 if job2 and job2.status == JobStatus.processing:
                     return {"status": "duplicate"}
                 return {"status": "skipped"}
                 
-            await r.sadd("active_processing_jobs", job_uuid)
             await session.commit()
             
             job = await svc.get_by_uuid(job_uuid)
+            action = job.job_action.value if hasattr(job.job_action, "value") else str(job.job_action)
             try:
                 meta_before = extract_metadata(input_path)
-                output_path = get_output_path(input_path)
+                output_path = get_output_path(input_path, action=action)
                 settings.temp_processed_dir.mkdir(parents=True, exist_ok=True)
-                strip_metadata(input_path, output_path)
+                run_ffmpeg_action(input_path, output_path, action=action)
                 if not Path(output_path).exists(): raise FFmpegError(-1,"Output not created")
                 meta_after = extract_metadata(output_path)
                 size = Path(output_path).stat().st_size
@@ -7089,23 +8672,17 @@ def process_video_task(self, job_uuid):
                 await session.commit()
                 from workers.sender import send_result_task
                 send_result_task.delay(job_uuid)
-                await r.srem("active_processing_jobs", job_uuid)
-                await r.close()
                 return {"status":"ok"}
             except FFmpegError as e:
                 await svc.update_status(job, JobStatus.failed, str(e)); await session.commit()
                 from workers.sender import notify_failure_task
                 notify_failure_task.delay(job_uuid)
-                await r.srem("active_processing_jobs", job_uuid)
-                await r.close()
                 return {"error":str(e)}
             except Exception as e:
                 logger.exception(f"Unexpected error job {job_uuid}")
                 try:
                     await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
                 except: pass
-                await r.srem("active_processing_jobs", job_uuid)
-                await r.close()
                 raise self.retry(exc=e)
     return asyncio.run(_run())
 

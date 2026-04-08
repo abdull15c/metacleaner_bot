@@ -56,8 +56,8 @@ python scripts\create_admin.py
 
 # 6. Запустить (3 отдельных окна)
 
-# Окно 1 — бот:
-python -m bot.main
+    # Окно 1 — бот:
+    python -m bot.main
 
 # Окно 2 — воркер:
 celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo

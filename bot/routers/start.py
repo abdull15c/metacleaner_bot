@@ -1,9 +1,12 @@
 import logging
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
+from pathlib import Path
 
-from bot.keyboards.webapp import webapp_upload_keyboard
+from bot.keyboards.main_menu import webapp_upload_keyboard, get_main_menu_button
+from aiogram import Bot
+from aiogram.types import FSInputFile
 
 router = Router(name="start")
 logger = logging.getLogger(__name__)
@@ -40,9 +43,49 @@ HELP = """
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, bot: Bot):
+    # Set WebApp Menu Button
+    await bot.set_chat_menu_button(
+        chat_id=message.chat.id,
+        menu_button=get_main_menu_button()
+    )
+    
     kb = webapp_upload_keyboard()
-    await message.answer(WELCOME, parse_mode="HTML", reply_markup=kb)
+    
+    # Try to send onboarding banner if exists
+    banner_path = Path("static/banner.png")
+    if banner_path.exists():
+        await message.answer_photo(
+            photo=FSInputFile(str(banner_path)),
+            caption=WELCOME,
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+    else:
+        await message.answer(WELCOME, parse_mode="HTML", reply_markup=kb)
+
+@router.message(F.text == "🧹 Очистить видео")
+async def msg_clean_hint(message: Message):
+    await message.answer("📎 <b>Отправьте видео файлом</b> (без сжатия), чтобы я очистил его от метаданных.")
+
+@router.message(F.text == "📊 Моя статистика")
+async def msg_stats(message: Message):
+    from core.database import get_db_session
+    from core.services.user_service import UserService
+    async with get_db_session() as session:
+        us = UserService(session)
+        user, _ = await us.get_or_create(message.from_user.id)
+        # Assuming we might want to add more stats later
+        await message.answer(
+            f"📊 <b>Ваша статистика:</b>\n\n"
+            f"Задач за сегодня: <b>{user.daily_job_count}</b>\n"
+            f"Дата регистрации: <b>{user.created_at.strftime('%d.%m.%Y')}</b>",
+            parse_mode="HTML"
+        )
+
+@router.message(F.text == "❓ Помощь")
+async def msg_help_btn(message: Message):
+    await message.answer(HELP, parse_mode="HTML")
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):

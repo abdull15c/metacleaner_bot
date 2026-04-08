@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Каналы (Спонсоры)</h1>
+    <div>
+        <form action="/admin/sponsors/toggle" method="POST" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn {{ 'btn-danger' if force_sub_enabled else 'btn-success' }}">
+                {{ 'Выключить' if force_sub_enabled else 'Включить' }} обязательную подписку
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">Добавить канал</div>
+    <div class="card-body">
+        <form action="/admin/sponsors" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="row">
+                <div class="col-md-3">
+                    <input type="number" name="channel_id" class="form-control" placeholder="ID канала (-100...)" required>
+                </div>
+                <div class="col-md-3">
+                    <input type="text" name="name" class="form-control" placeholder="Название" required>
+                </div>
+                <div class="col-md-4">
+                    <input type="url" name="url" class="form-control" placeholder="Ссылка (https://t.me/...)" required>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">Добавить</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">Список каналов</div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Название</th>
+                    <th>Ссылка</th>
+                    <th>Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in channels %}
+                <tr>
+                    <td><code>{{ c.channel_id }}</code></td>
+                    <td>{{ c.name }}</td>
+                    <td><a href="{{ c.url }}" target="_blank">{{ c.url }}</a></td>
+                    <td>
+                        <form action="/admin/sponsors/{{ c.id }}/delete" method="POST" onsubmit="return confirm('Удалить?')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="text-center text-muted">Каналов пока нет</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

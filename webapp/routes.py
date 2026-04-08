@@ -1,13 +1,18 @@
 import logging
 import re
 import uuid
+import json
+import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Optional
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from core.config import settings
 from core.constants import SUPPORTED_VIDEO_EXTENSIONS
@@ -18,6 +23,8 @@ from core.services.settings_service import SettingsService
 from core.services.user_service import UserService
 from webapp.result_token import parse_result_download_token
 from webapp.tg_init_data import telegram_user_id, validate_webapp_init_data
+from core.models import SiteDownloadJob, JobStatus, DownloadFormat
+from core.platform_detect import detect_platform, is_supported_url
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +238,162 @@ async def webapp_job_status(
     }
 
 
+class DownloadInfoRequest(BaseModel):
+    url: str
+
+class DownloadStartRequest(BaseModel):
+    url: str
+    format: str
+    clean_metadata: bool
+
+@router.post("/api/webapp/download/info")
+async def download_info(
+    req: DownloadInfoRequest, 
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None
+):
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=401, detail="missing_init_data")
+    url = req.url
+    platform = detect_platform(url)
+    if platform == "unknown":
+        return JSONResponse({"supported": False}, status_code=400)
+    
+    try:
+        from core.config import settings
+        cmd = ["yt-dlp", "--dump-json", "--no-playlist", "--quiet", url]
+        if platform == "youtube":
+            cmd.extend(["--js-runtimes", "node", "--extractor-args", "youtube:player_client=web,default"])
+            
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return JSONResponse({"error": "Failed to get info", "details": r.stderr[:200]}, status_code=400)
+            
+        info = json.loads(r.stdout)
+        
+        formats = [
+            {"id": "best_1080", "label": "MP4 1080p", "ext": "mp4"},
+            {"id": "best_720",  "label": "MP4 720p",  "ext": "mp4"},
+            {"id": "best_480",  "label": "MP4 480p",  "ext": "mp4"},
+            {"id": "best_360",  "label": "MP4 360p",  "ext": "mp4"},
+            {"id": "best_auto", "label": "MP4 Auto",  "ext": "mp4"},
+            {"id": "mp3_320",   "label": "MP3 320kbps", "ext": "mp3"},
+            {"id": "mp3_192",   "label": "MP3 192kbps", "ext": "mp3"},
+            {"id": "m4a_best",  "label": "M4A Best",  "ext": "m4a"}
+        ]
+        
+        return {
+            "platform": platform,
+            "title": info.get("title", "Unknown Title"),
+            "duration_sec": info.get("duration", 0),
+            "thumbnail": info.get("thumbnail"),
+            "formats": formats,
+            "supported": True
+        }
+    except Exception as e:
+        logger.error(f"Failed getting download info: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@router.post("/api/webapp/download/start")
+async def download_start(
+    req: DownloadStartRequest,
+    session: AsyncSession = Depends(get_db),
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None
+):
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=401, detail="missing_init_data")
+    tg_id = telegram_user_id(x_telegram_init_data.strip(), settings.bot_token)
+    if tg_id is None:
+        raise HTTPException(status_code=401, detail="invalid_init_data")
+        
+    url = req.url
+    platform = detect_platform(url)
+    if platform == "unknown":
+        raise HTTPException(status_code=400, detail="Unsupported platform")
+        
+    today = datetime.utcnow().date()
+    stmt = select(SiteDownloadJob).where(
+        SiteDownloadJob.telegram_id == tg_id,
+        SiteDownloadJob.created_at >= datetime(today.year, today.month, today.day)
+    )
+    result = await session.execute(stmt)
+    today_count = len(result.scalars().all())
+    
+    if today_count >= 5:
+        raise HTTPException(status_code=429, detail="Daily limit of 5 downloads reached")
+
+    job_uuid = str(uuid.uuid4())
+    job = SiteDownloadJob(
+        uuid=job_uuid,
+        telegram_id=tg_id,
+        platform=platform,
+        source_url=url,
+        format=req.format,
+        clean_metadata=req.clean_metadata,
+        status=JobStatus.pending
+    )
+    session.add(job)
+    await session.commit()
+    
+    from workers.downloader_only import download_only_task
+    task = download_only_task.delay(job_uuid)
+    
+    job.celery_task_id = task.id
+    await session.commit()
+    
+    return {"job_id": job_uuid, "platform": platform}
+
+@router.get("/api/webapp/download/job/{job_id}")
+async def get_download_job(
+    job_id: str, 
+    session: AsyncSession = Depends(get_db),
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None
+):
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=401, detail="missing_init_data")
+    tg_id = telegram_user_id(x_telegram_init_data.strip(), settings.bot_token)
+    if tg_id is None:
+        raise HTTPException(status_code=401, detail="invalid_init_data")
+        
+    stmt = select(SiteDownloadJob).where(SiteDownloadJob.uuid == job_id, SiteDownloadJob.telegram_id == tg_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    return {
+        "uuid": job.uuid,
+        "status": job.status,
+        "platform": job.platform,
+        "title": job.original_title or "Video",
+        "file_size_bytes": job.file_size_bytes,
+        "download_url": f"/api/webapp/download/result/{job.uuid}",
+        "expires_in_minutes": 30
+    }
+
+@router.get("/api/webapp/download/result/{job_id}")
+async def download_result(
+    job_id: str, 
+    session: AsyncSession = Depends(get_db),
+    t: Annotated[Optional[str], Query(description="Signed token")] = None,
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None,
+):
+    tg_id = _resolve_result_telegram_id(job_id, t, x_telegram_init_data)
+    
+    stmt = select(SiteDownloadJob).where(SiteDownloadJob.uuid == job_id, SiteDownloadJob.telegram_id == tg_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+    
+    if not job or job.status != JobStatus.done or not job.file_path:
+        raise HTTPException(status_code=404, detail="File not ready or not found")
+        
+    path = Path(job.file_path)
+    if not path.exists():
+        raise HTTPException(status_code=410, detail="File deleted or not found")
+        
+    return FileResponse(path, filename=path.name)
+
+
 def _resolve_result_telegram_id(
     job_uuid: str,
     t: Optional[str],
@@ -276,5 +439,6 @@ async def webapp_download_result(
     return FileResponse(
         path,
         filename=fn,
-        media_type="application/octet-stream",
-    )
+    media_type="application/octet-stream",
+    headers={"X-Accel-Redirect": f"{settings.x_accel_prefix}{path.name}"} if settings.use_x_accel_redirect else None
+)

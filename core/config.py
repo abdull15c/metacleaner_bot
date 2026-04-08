@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     youtube_enabled: bool = True
     youtube_cookies_file: Optional[Path] = None
     youtube_cookies_admin_path: Path = Path("secrets/youtube_cookies.txt")
+    instagram_cookies_file: Optional[Path] = None
+    tiktok_cookies_file: Optional[Path] = None
+    facebook_cookies_file: Optional[Path] = None
     youtube_proxy: Optional[str] = None
     # Переопределить корень проекта (если воркер стартует не из каталога репозитория).
     metacleaner_root: Optional[Path] = None
@@ -60,6 +63,10 @@ class Settings(BaseSettings):
     public_base_url: Optional[str] = None
     # Лимит sendDocument в Bot API (~50 МБ); больше — только ссылка HTTP.
     telegram_bot_max_send_document_mb: int = Field(default=49, ge=1, le=2000)
+
+    # Nginx X-Accel-Redirect
+    use_x_accel_redirect: bool = False
+    x_accel_prefix: str = "/protected-media/"
     
     telegram_webhook_url: Optional[str] = None
     telegram_webhook_secret: Optional[str] = None

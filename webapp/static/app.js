@@ -154,44 +154,52 @@
 
   // --- Tabs ---
   const tabUpload = document.getElementById("tab-upload");
+  const tabDownload = document.getElementById("tab-download");
   const tabHistory = document.getElementById("tab-history");
   const contentUpload = document.getElementById("upload-tab-content");
+  const contentDownload = document.getElementById("download-tab-content");
   const contentHistory = document.getElementById("history-tab-content");
   const historyList = document.getElementById("history-list");
   const btnRefreshHistory = document.getElementById("btn-refresh-history");
 
+  function resetTabs() {
+      if(tabUpload) { tabUpload.classList.remove("active"); tabUpload.style.borderBottomColor = "transparent"; tabUpload.style.color = "var(--tg-theme-hint-color, #888)"; }
+      if(tabDownload) { tabDownload.classList.remove("active"); tabDownload.style.borderBottomColor = "transparent"; tabDownload.style.color = "var(--tg-theme-hint-color, #888)"; }
+      if(tabHistory) { tabHistory.classList.remove("active"); tabHistory.style.borderBottomColor = "transparent"; tabHistory.style.color = "var(--tg-theme-hint-color, #888)"; }
+      if(contentUpload) contentUpload.style.display = "none";
+      if(contentDownload) contentDownload.style.display = "none";
+      if(contentHistory) contentHistory.style.display = "none";
+  }
+
   function switchTab(tab) {
+    resetTabs();
     if (tab === "upload") {
       if (tabUpload) {
         tabUpload.classList.add("active");
         tabUpload.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
         tabUpload.style.color = "var(--tg-theme-text-color, #000)";
       }
-      if (tabHistory) {
-        tabHistory.classList.remove("active");
-        tabHistory.style.borderBottomColor = "transparent";
-        tabHistory.style.color = "var(--tg-theme-hint-color, #888)";
-      }
       if (contentUpload) contentUpload.style.display = "block";
-      if (contentHistory) contentHistory.style.display = "none";
+    } else if (tab === "download") {
+      if (tabDownload) {
+        tabDownload.classList.add("active");
+        tabDownload.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
+        tabDownload.style.color = "var(--tg-theme-text-color, #000)";
+      }
+      if (contentDownload) contentDownload.style.display = "block";
     } else {
       if (tabHistory) {
         tabHistory.classList.add("active");
         tabHistory.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
         tabHistory.style.color = "var(--tg-theme-text-color, #000)";
       }
-      if (tabUpload) {
-        tabUpload.classList.remove("active");
-        tabUpload.style.borderBottomColor = "transparent";
-        tabUpload.style.color = "var(--tg-theme-hint-color, #888)";
-      }
       if (contentHistory) contentHistory.style.display = "block";
-      if (contentUpload) contentUpload.style.display = "none";
       loadHistory();
     }
   }
   
   if (tabUpload) tabUpload.addEventListener("click", () => switchTab("upload"));
+  if (tabDownload) tabDownload.addEventListener("click", () => switchTab("download"));
   if (tabHistory) tabHistory.addEventListener("click", () => switchTab("history"));
   if (btnRefreshHistory) btnRefreshHistory.addEventListener("click", loadHistory);
   
@@ -423,8 +431,162 @@
   });
 })();
 
-window.downloadResult = async function(jobUuid, idata) {
-  const r = await fetch("/api/webapp/result/" + encodeURIComponent(jobUuid), {
+let downloadJobUuid = null;
+let downloadPollInterval = null;
+
+const dlUrlInput = document.getElementById('download-url');
+const btnGetInfo = document.getElementById('btn-get-info');
+const btnStartDownload = document.getElementById('btn-start-download');
+const dlStep1 = document.getElementById('download-step-1');
+const dlStep2 = document.getElementById('download-step-2');
+const dlStep3 = document.getElementById('download-step-3');
+const dlStep4 = document.getElementById('download-step-4');
+
+if (btnGetInfo) {
+    btnGetInfo.addEventListener('click', async () => {
+        const url = dlUrlInput.value.trim();
+        if (!url) return;
+        
+        btnGetInfo.disabled = true;
+        btnGetInfo.textContent = "Получение...";
+        
+        try {
+            const resp = await fetch('/api/webapp/download/info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Telegram-Init-Data': initData()
+                },
+                body: JSON.stringify({ url })
+            });
+            
+            const data = await resp.json();
+            
+            if (!resp.ok || !data.supported) {
+                alert(data.error || "Платформа не поддерживается или произошла ошибка.");
+                btnGetInfo.disabled = false;
+                btnGetInfo.textContent = "Получить информацию";
+                return;
+            }
+            
+            document.getElementById('dl-thumb').src = data.thumbnail || '';
+            document.getElementById('dl-title').textContent = data.title;
+            
+            const min = Math.floor(data.duration_sec / 60);
+            const sec = data.duration_sec % 60;
+            document.getElementById('dl-platform').textContent = `${data.platform.toUpperCase()} • ${min}:${sec.toString().padStart(2, '0')}`;
+            
+            const formatSelect = document.getElementById('dl-format');
+            formatSelect.innerHTML = '';
+            data.formats.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f.id;
+                opt.textContent = f.label;
+                formatSelect.appendChild(opt);
+            });
+            
+            dlStep1.style.display = 'none';
+            dlStep2.style.display = 'block';
+        } catch (e) {
+            alert("Ошибка сети");
+        }
+        
+        btnGetInfo.disabled = false;
+        btnGetInfo.textContent = "Получить информацию";
+    });
+}
+
+if (document.getElementById('btn-dl-back')) {
+    document.getElementById('btn-dl-back').addEventListener('click', () => {
+        dlStep2.style.display = 'none';
+        dlStep1.style.display = 'block';
+    });
+}
+
+if (btnStartDownload) {
+    btnStartDownload.addEventListener('click', async () => {
+        const url = dlUrlInput.value.trim();
+        const format = document.getElementById('dl-format').value;
+        const clean_metadata = document.getElementById('dl-clean-metadata').checked;
+        
+        dlStep2.style.display = 'none';
+        dlStep3.style.display = 'block';
+        
+        try {
+            const resp = await fetch('/api/webapp/download/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Telegram-Init-Data': initData()
+                },
+                body: JSON.stringify({ url, format, clean_metadata })
+            });
+            
+            const data = await resp.json();
+            
+            if (!resp.ok) {
+                alert(data.detail || "Ошибка");
+                dlStep3.style.display = 'none';
+                dlStep2.style.display = 'block';
+                return;
+            }
+            
+            downloadJobUuid = data.job_id;
+            pollDownloadJob();
+        } catch (e) {
+            alert("Ошибка сети");
+            dlStep3.style.display = 'none';
+            dlStep2.style.display = 'block';
+        }
+    });
+}
+
+function pollDownloadJob() {
+    if (downloadPollInterval) clearInterval(downloadPollInterval);
+    
+    downloadPollInterval = setInterval(async () => {
+        try {
+            const resp = await fetch(`/api/webapp/download/job/${downloadJobUuid}`, {
+                headers: { 'X-Telegram-Init-Data': initData() }
+            });
+            
+            if (resp.ok) {
+                const data = await resp.json();
+                
+                if (data.status === 'done') {
+                    clearInterval(downloadPollInterval);
+                    dlStep3.style.display = 'none';
+                    dlStep4.style.display = 'block';
+                    
+                    const btnDlFile = document.getElementById('btn-download-file');
+                    btnDlFile.onclick = (e) => {
+                        e.preventDefault();
+                        window.downloadResult(downloadJobUuid, initData(), true, data.title);
+                    };
+                } else if (data.status === 'failed' || data.status === 'cancelled') {
+                    clearInterval(downloadPollInterval);
+                    alert("Ошибка скачивания: " + data.status);
+                    dlStep3.style.display = 'none';
+                    dlStep1.style.display = 'block';
+                }
+            }
+        } catch (e) {
+            // ignore temp errors
+        }
+    }, 3000);
+}
+
+if (document.getElementById('btn-dl-again')) {
+    document.getElementById('btn-dl-again').addEventListener('click', () => {
+        dlUrlInput.value = '';
+        dlStep4.style.display = 'none';
+        dlStep1.style.display = 'block';
+    });
+}
+
+window.downloadResult = async function(jobUuid, idata, isSiteDownload = false, customTitle = null) {
+  const endpoint = isSiteDownload ? `/api/webapp/download/result/` : `/api/webapp/result/`;
+  const r = await fetch(endpoint + encodeURIComponent(jobUuid), {
     headers: { "X-Telegram-Init-Data": idata },
   });
   if (!r.ok) {
@@ -445,7 +607,16 @@ window.downloadResult = async function(jobUuid, idata) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "video_clean.mp4";
+  let filename = customTitle ? customTitle + ".mp4" : "video_clean.mp4";
+  const cd = r.headers.get("Content-Disposition");
+  if (cd) {
+    const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+    if (m) {
+      try { filename = decodeURIComponent(m[1].trim()); }
+      catch (_) { filename = m[1].trim(); }
+    }
+  }
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 };

@@ -59,9 +59,34 @@ def strip_metadata(input_path, output_path):
         raise FFmpegError(-1, "FFmpeg timed out")
 
 
-def get_output_path(input_path):
+def get_output_path(input_path, action="clean"):
     ext = Path(input_path).suffix.lower()
+    u = uuid.uuid4()
+    if action == "extract_audio":
+        return str(settings.temp_processed_dir / f"{u}_audio.mp3")
+    elif action == "screenshot":
+        return str(settings.temp_processed_dir / f"{u}_thumb.jpg")
     return str(settings.temp_processed_dir / f"{uuid.uuid4()}_clean{ext}")
+
+def run_ffmpeg_action(input_path, output_path, action="clean"):
+    if action == "extract_audio":
+        # Extract audio to MP3 192k
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-vn", "-acodec", "libmp3lame", "-ab", "192k", output_path]
+    elif action == "screenshot":
+        # Take a screenshot at 1 second mark (or 0)
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-ss", "00:00:01", "-vframes", "1", output_path]
+    else:
+        # Default clean
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-map_metadata", "-1", "-map_chapters", "-1",
+               "-c", "copy", "-movflags", "+faststart", output_path]
+               
+    logger.info(f"FFmpeg ({action}): {' '.join(cmd)}")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if r.returncode != 0: raise FFmpegError(r.returncode, r.stderr)
+        return True, r.stderr
+    except subprocess.TimeoutExpired:
+        raise FFmpegError(-1, "FFmpeg timed out")
 
 
 @app.task(name="workers.video_processor.process_video_task", bind=True, max_retries=2, default_retry_delay=30, queue="video")
@@ -81,36 +106,23 @@ def process_video_task(self, job_uuid):
                 await session.commit()
                 return {"error": "missing"}
                 
-            import redis.asyncio as aioredis
-            from core.services.settings_service import SettingsService
-            ss = SettingsService(session)
-            max_concurrent = int(await ss.get("max_concurrent_jobs", settings.max_concurrent_jobs))
-            r = aioredis.from_url(str(settings.redis_url))
-            active_count = await r.scard("active_processing_jobs")
-            
-            if active_count >= max_concurrent:
-                await session.commit()
-                await r.close()
-                raise self.retry(countdown=10)
-                
             began = await svc.try_begin_video_processing(job_uuid)
             if not began:
                 await session.commit()
-                await r.close()
                 job2 = await svc.get_by_uuid(job_uuid)
                 if job2 and job2.status == JobStatus.processing:
                     return {"status": "duplicate"}
                 return {"status": "skipped"}
                 
-            await r.sadd("active_processing_jobs", job_uuid)
             await session.commit()
             
             job = await svc.get_by_uuid(job_uuid)
+            action = job.job_action.value if hasattr(job.job_action, "value") else str(job.job_action)
             try:
                 meta_before = extract_metadata(input_path)
-                output_path = get_output_path(input_path)
+                output_path = get_output_path(input_path, action=action)
                 settings.temp_processed_dir.mkdir(parents=True, exist_ok=True)
-                strip_metadata(input_path, output_path)
+                run_ffmpeg_action(input_path, output_path, action=action)
                 if not Path(output_path).exists(): raise FFmpegError(-1,"Output not created")
                 meta_after = extract_metadata(output_path)
                 size = Path(output_path).stat().st_size
@@ -118,22 +130,16 @@ def process_video_task(self, job_uuid):
                 await session.commit()
                 from workers.sender import send_result_task
                 send_result_task.delay(job_uuid)
-                await r.srem("active_processing_jobs", job_uuid)
-                await r.close()
                 return {"status":"ok"}
             except FFmpegError as e:
                 await svc.update_status(job, JobStatus.failed, str(e)); await session.commit()
                 from workers.sender import notify_failure_task
                 notify_failure_task.delay(job_uuid)
-                await r.srem("active_processing_jobs", job_uuid)
-                await r.close()
                 return {"error":str(e)}
             except Exception as e:
                 logger.exception(f"Unexpected error job {job_uuid}")
                 try:
                     await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
                 except: pass
-                await r.srem("active_processing_jobs", job_uuid)
-                await r.close()
                 raise self.retry(exc=e)
     return asyncio.run(_run())

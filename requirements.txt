@@ -13,7 +13,7 @@ bleach==6.1.0
 alembic==1.13.1
 celery==5.3.6
 redis==5.0.4
-yt-dlp==2024.5.27
+yt-dlp>=2026.3.17
 pydantic==2.7.1
 pydantic-settings==2.2.1
 python-dotenv==1.0.1

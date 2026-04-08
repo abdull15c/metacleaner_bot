@@ -13,12 +13,26 @@ def _fmt(b):
     return f"{b/1048576:.1f} MB"
 
 
-async def _send_doc(bot, chat_id, path, caption, retries=3):
+async def _send_doc(bot, chat_id, path, caption, retries=3, action="clean"):
     from aiogram.exceptions import TelegramRetryAfter, TelegramAPIError
-    from aiogram.types import FSInputFile
+    from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+    
+    # Viral sharing button
+    bot_username = (settings.telegram_bot_username or "").lstrip("@")
+    kb = None
+    if bot_username:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↗️ Поделиться ботом", switch_inline_query=f"check this bot @{bot_username}")]
+        ])
+
     for attempt in range(retries):
         try:
-            await bot.send_document(chat_id=chat_id, document=FSInputFile(path), caption=caption)
+            if action == "extract_audio":
+                await bot.send_audio(chat_id=chat_id, audio=FSInputFile(path), caption=caption, reply_markup=kb)
+            elif action == "screenshot":
+                await bot.send_photo(chat_id=chat_id, photo=FSInputFile(path), caption=caption, reply_markup=kb)
+            else:
+                await bot.send_document(chat_id=chat_id, document=FSInputFile(path), caption=caption, reply_markup=kb)
             return True
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after + 1)
@@ -82,15 +96,24 @@ def send_result_task(self, job_uuid):
                 proc_path = Path(job.temp_processed_path)
                 proc_size = proc_path.stat().st_size if proc_path.exists() else 0
                 limit = settings.telegram_bot_max_send_document_bytes
+                action = job.job_action.value if hasattr(job.job_action, "value") else str(job.job_action)
+                
+                labels = {
+                    "clean": "✅ <b>Метаданные очищены!</b>",
+                    "extract_audio": "🎵 <b>Аудио извлечено!</b>",
+                    "screenshot": "🖼 <b>Скриншот готов!</b>"
+                }
+                
                 caption = (
-                    f"✅ <b>Метаданные очищены!</b>\n\n"
+                    f"{labels.get(action, labels['clean'])}\n\n"
                     f"📁 Исходный: {_fmt(job.original_size_bytes or 0)}\n"
                     f"📁 Итоговый: {_fmt(job.processed_size_bytes or proc_size)}\n"
-                    f"🆔 Задача: <code>#{job.uuid[:8]}</code>"
+                    f"🆔 Задача: <code>#{job.uuid[:8]}</code>\n\n"
+                    f"<i>Очищено с помощью @{(settings.telegram_bot_username or 'MetaCleanerBot').lstrip('@')}</i>"
                 )
                 ok = False
                 if proc_size <= limit:
-                    ok = await _send_doc(bot, tg_id, job.temp_processed_path, caption)
+                    ok = await _send_doc(bot, tg_id, job.temp_processed_path, caption, action=action)
                     if ok:
                         await _send_msg(bot, tg_id, "🗑 Временные файлы удалены. Хорошего дня!")
                         await svc.update_status(job, JobStatus.done)
