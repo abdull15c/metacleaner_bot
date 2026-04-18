@@ -32,29 +32,70 @@ class UserService:
         return list(r.scalars().all())
 
     async def increment_daily_count(self, user, max_daily) -> bool:
-        from sqlalchemy import update, literal_column
-        now = datetime.now(timezone.utc)
+        """
+        Атомарный инкремент дневного счетчика с автоматическим сбросом.
         
-        # Reset if needed
-        if user.daily_reset_at is None or (now - user.daily_reset_at.replace(tzinfo=timezone.utc)) > timedelta(days=1):
-            user.daily_job_count = 0
-            user.daily_reset_at = now
-            await self.session.flush()
-
+        SECURITY FIX: Устранена race condition через атомарную операцию.
+        """
+        from sqlalchemy import update, case, or_, and_
+        now = datetime.now(timezone.utc)
+        reset_threshold = now - timedelta(days=1)
+        
+        # Атомарная операция: проверка + сброс + инкремент в одном UPDATE
         stmt = (
             update(User)
             .where(User.id == user.id)
-            .where(User.daily_job_count < max_daily)
-            .values(daily_job_count=User.daily_job_count + 1)
-            .returning(User.daily_job_count)
+            .where(
+                # Условие: счетчик не превышен ИЛИ нужен сброс
+                or_(
+                    and_(
+                        User.daily_job_count < max_daily,
+                        User.daily_reset_at > reset_threshold
+                    ),
+                    User.daily_reset_at <= reset_threshold,
+                    User.daily_reset_at.is_(None)
+                )
+            )
+            .values(
+                daily_job_count=case(
+                    # Если нужен сброс - установить 1
+                    (
+                        or_(
+                            User.daily_reset_at <= reset_threshold,
+                            User.daily_reset_at.is_(None)
+                        ),
+                        1
+                    ),
+                    # Иначе инкремент
+                    else_=User.daily_job_count + 1
+                ),
+                daily_reset_at=case(
+                    # Если нужен сброс - установить now
+                    (
+                        or_(
+                            User.daily_reset_at <= reset_threshold,
+                            User.daily_reset_at.is_(None)
+                        ),
+                        now
+                    ),
+                    # Иначе оставить как есть
+                    else_=User.daily_reset_at
+                )
+            )
+            .returning(User.daily_job_count, User.daily_reset_at)
         )
-        result = await self.session.execute(stmt)
-        updated_count = result.scalar_one_or_none()
         
-        if updated_count is None:
+        result = await self.session.execute(stmt)
+        row = result.one_or_none()
+        
+        if row is None:
+            # Лимит превышен
             return False
-            
-        user.daily_job_count = updated_count
+        
+        # Обновить объект в памяти
+        user.daily_job_count = row[0]
+        user.daily_reset_at = row[1]
+        
         return True
 
     async def rollback_daily_job_increment(self, user) -> None:

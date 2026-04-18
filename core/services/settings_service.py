@@ -33,32 +33,57 @@ class SettingsService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get(self, key, default=None):
+    async def _redis_client(self):
         import redis.asyncio as aioredis
         from core.config import settings
-        r_client = aioredis.from_url(str(settings.redis_url))
+
+        client = aioredis.from_url(str(settings.redis_url))
+        try:
+            await client.ping()
+            return client
+        except Exception:
+            try:
+                await client.close()
+            except Exception:
+                pass
+            return None
+
+    async def get(self, key, default=None):
         cache_key = f"setting:{key}"
-        
-        cached = await r_client.get(cache_key)
-        if cached is not None:
-            await r_client.close()
-            try: return json.loads(cached)
-            except: return cached.decode('utf-8')
-            
+        r_client = await self._redis_client()
+
+        if r_client is not None:
+            try:
+                cached = await r_client.get(cache_key)
+                if cached is not None:
+                    try:
+                        return json.loads(cached)
+                    except Exception:
+                        return cached.decode("utf-8")
+            except Exception:
+                pass
+            finally:
+                await r_client.close()
+                r_client = None
+
         r = await self.session.execute(select(Setting).where(Setting.key == key))
         s = r.scalar_one_or_none()
-        
+
         val = default
         if s is not None:
-            try: val = json.loads(s.value)
-            except: val = s.value
-            
-        try:
-            await r_client.setex(cache_key, 60, json.dumps(val) if not isinstance(val, str) else val)
-        except Exception:
-            pass
-            
-        await r_client.close()
+            try:
+                val = json.loads(s.value)
+            except Exception:
+                val = s.value
+
+        r_client = await self._redis_client()
+        if r_client is not None:
+            try:
+                await r_client.setex(cache_key, 60, json.dumps(val) if not isinstance(val, str) else val)
+            except Exception:
+                pass
+            finally:
+                await r_client.close()
         return val
 
     async def set(self, key, value, admin_id=None):
@@ -71,20 +96,28 @@ class SettingsService:
                                      updated_at=datetime.now(timezone.utc), updated_by=admin_id))
         else:
             s.value = v; s.updated_at = datetime.now(timezone.utc); s.updated_by = admin_id
-            
-        import redis.asyncio as aioredis
-        from core.config import settings
-        r_client = aioredis.from_url(str(settings.redis_url))
+
+        r_client = await self._redis_client()
         cache_key = f"setting:{key}"
-        await r_client.delete(cache_key)
-        await r_client.close()
+        if r_client is not None:
+            try:
+                await r_client.delete(cache_key)
+            finally:
+                await r_client.close()
 
     async def get_all(self):
+        """Получить все настройки из БД."""
         r = await self.session.execute(select(Setting))
         out = {}
         for s in r.scalars().all():
-            try: out[s.key] = json.loads(s.value)
-            except: out[s.key] = s.value
+            try: 
+                out[s.key] = json.loads(s.value)
+            except Exception as e:
+                # SECURITY FIX: Логирование вместо молчаливого игнорирования
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to parse setting {s.key}: {e}")
+                out[s.key] = s.value
         return out
 
     async def get_all_with_meta(self):

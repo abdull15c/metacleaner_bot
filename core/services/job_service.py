@@ -33,6 +33,22 @@ class JobService:
             .limit(1),
         )
         return r.scalars().first()
+    
+    async def count_active_jobs(self) -> int:
+        """
+        Подсчет всех активных задач в системе.
+        
+        SECURITY FIX: Добавлено для проверки глобального лимита MAX_CONCURRENT_JOBS.
+        """
+        active_statuses = [
+            JobStatus.pending,
+            JobStatus.downloading,
+            JobStatus.processing
+        ]
+        r = await self.session.execute(
+            select(func.count(Job.id)).where(Job.status.in_(active_statuses))
+        )
+        return r.scalar() or 0
 
     async def get_user_jobs(self, user_id, limit=5):
         r = await self.session.execute(select(Job).where(Job.user_id == user_id).order_by(Job.created_at.desc()).limit(limit))
@@ -49,9 +65,21 @@ class JobService:
     async def set_file_paths(self, job, path, size): job.temp_original_path = path; job.original_size_bytes = size
 
     async def set_processed_file(self, job, path, size, metadata_before=None, metadata_after=None):
-        job.temp_processed_path = path; job.processed_size_bytes = size
-        if metadata_before is not None: job.metadata_before = metadata_before
-        if metadata_after is not None: job.metadata_after = metadata_after
+        """
+        Установить обработанный файл с метаданными.
+        
+        SECURITY FIX: Ограничение размера метаданных для предотвращения memory leak.
+        """
+        from core.metadata_utils import truncate_metadata
+        
+        job.temp_processed_path = path
+        job.processed_size_bytes = size
+        
+        if metadata_before is not None:
+            job.metadata_before = truncate_metadata(metadata_before)
+        
+        if metadata_after is not None:
+            job.metadata_after = truncate_metadata(metadata_after)
 
     async def set_youtube_consent(self, job, consented):
         job.youtube_consent = consented

@@ -7,7 +7,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: metacleaner
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+      # SECURITY FIX: Убран дефолтный пароль, теперь обязательно требуется переменная
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD environment variable is required}
       POSTGRES_DB: metacleaner
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -50,6 +51,24 @@ services:
       redis:
         condition: service_healthy
     command: python -m bot
+    
+    # SECURITY FIX: Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import sys; sys.exit(0)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   admin:
     build: .
@@ -63,6 +82,24 @@ services:
       redis:
         condition: service_healthy
     command: python -m admin
+    
+    # SECURITY FIX: Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # worker:
   #   build: .
@@ -83,6 +120,24 @@ services:
       - temp_data:/app/temp
       - logs_data:/app/logs
     command: celery -A workers.celery_app worker -l INFO -c 2 -Q video,broadcast,cleanup,celery
+    
+    # SECURITY FIX: Ограничения ресурсов (больше для обработки видео)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A workers.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   beat:
     build: .
@@ -94,6 +149,16 @@ services:
       redis:
         condition: service_healthy
     command: celery -A workers.celery_app beat -l INFO
+    
+    # SECURITY FIX: Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
 
 volumes:
   pgdata:

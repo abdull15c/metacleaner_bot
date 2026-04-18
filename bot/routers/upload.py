@@ -48,6 +48,18 @@ async def handle_video(message: Message, bot: Bot, db_user: User):
             await message.answer(
                 f"⏳ У вас уже обрабатывается задача <code>#{active.uuid[:8]}</code>.\n"
                 f"Дождитесь завершения или введите /cancel.", parse_mode="HTML"); return
+        
+        # SECURITY FIX: Проверка глобального лимита MAX_CONCURRENT_JOBS
+        max_concurrent = int(await ss.get("max_concurrent_jobs", settings.max_concurrent_jobs))
+        current_active = await js.count_active_jobs()
+        
+        if current_active >= max_concurrent:
+            await message.answer(
+                f"⏳ Система перегружена. Активных задач: {current_active}/{max_concurrent}\n"
+                f"Попробуйте через несколько минут.", parse_mode="HTML"
+            )
+            return
+        
         if not await us.increment_daily_count(user, max_daily):
             await message.answer(f"⚠️ Дневной лимит задач исчерпан (<b>{max_daily}</b>/день).\nПопробуйте завтра.", parse_mode="HTML"); return
         
@@ -105,6 +117,27 @@ async def confirm_action_cb(callback: CallbackQuery, bot: Bot):
         
         tg_file = await bot.get_file(fid)
         await bot.download_file(tg_file.file_path, destination=str(local))
+        
+        # SECURITY FIX: Валидация MIME-типа после загрузки
+        from core.mime_validator import validate_video_file_mime
+        is_valid, error_msg = validate_video_file_mime(local)
+        if not is_valid:
+            local.unlink(missing_ok=True)
+            async with get_db_session() as session:
+                js_rollback = JobService(session)
+                us_rollback = UserService(session)
+                job_rollback = await js_rollback.get_by_uuid(job_uuid)
+                if job_rollback:
+                    await js_rollback.update_status(job_rollback, JobStatus.failed, f"Invalid file type: {error_msg}")
+                    user_rollback = await us_rollback.get_by_id(job_rollback.user_id)
+                    if user_rollback:
+                        await us_rollback.rollback_daily_job_increment(user_rollback)
+                await session.commit()
+            await callback.message.edit_text(
+                f"❌ Недопустимый формат файла.\n{error_msg}\n\nПоддерживаются только видео форматы.",
+                parse_mode="HTML"
+            )
+            return
         
         async with get_db_session() as session:
             js2 = JobService(session)

@@ -4,6 +4,7 @@ from typing import Optional
 
 from core.config import settings
 from core.exceptions import DownloadError, InvalidYouTubeURLError
+from core.url_validator import validate_download_url, InvalidURLError, sanitize_url_for_logging
 from workers.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -30,16 +31,31 @@ def _yt_dlp_extra_args(cookies_path: Optional[Path], proxy: Optional[str]) -> li
 
 
 def download_youtube_video(url, output_dir, cookies_path: Optional[Path], proxy: Optional[str]):
+    # SECURITY: Валидация URL для защиты от SSRF
+    try:
+        url = validate_download_url(url, platform="youtube")
+    except InvalidURLError as e:
+        logger.warning(f"URL validation failed: {e}")
+        raise InvalidYouTubeURLError(str(e))
+    
     name = str(uuid.uuid4())
     template = str(output_dir / f"{name}.%(ext)s")
     extra = _yt_dlp_extra_args(cookies_path, proxy)
+    
+    # SECURITY: Логируем только безопасную часть URL
+    safe_url = sanitize_url_for_logging(url)
+    logger.info(f"Starting download from: {safe_url}")
+    
     info_r = subprocess.run(
         ["yt-dlp", "--js-runtimes", "node",
          "--extractor-args", "youtube:player_client=web,default",
          *extra, "--dump-json", "--no-playlist", "--quiet", url],
         capture_output=True, text=True, timeout=30,
     )
-    if info_r.returncode != 0: raise InvalidYouTubeURLError(f"Cannot access: {info_r.stderr[:200]}")
+    # SECURITY FIX: Не показывать stderr пользователю (может содержать пути, версии)
+    if info_r.returncode != 0:
+        logger.error(f"yt-dlp info failed for {safe_url}: {info_r.stderr[:200]}")
+        raise InvalidYouTubeURLError("Cannot access video. Please check the URL.")
     try:
         info_json = json.loads(info_r.stdout)
         title = info_json.get("title","video")

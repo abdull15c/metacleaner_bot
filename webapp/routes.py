@@ -122,14 +122,13 @@ async def webapp_upload(
     disk_name = f"{uuid.uuid4()}{ext or '.mp4'}"
     dest = settings.temp_upload_dir / disk_name
     total = 0
+    chunk_size = 1024 * 1024  # 1MB
+    
     try:
         with dest.open("wb") as out:
             while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
+                # SECURITY FIX: Проверка размера ДО чтения чанка
+                if total >= max_bytes:
                     dest.unlink(missing_ok=True)
                     async with get_db_session() as session:
                         js = JobService(session)
@@ -140,8 +139,20 @@ async def webapp_upload(
                         u2 = await us.get_by_id(user_id)
                         if u2:
                             await us.rollback_daily_job_increment(u2)
+                        await session.commit()
                     raise HTTPException(status_code=413, detail="file_too_large")
+                
+                # Читать не больше, чем осталось до лимита
+                remaining = max_bytes - total
+                read_size = min(chunk_size, remaining)
+                
+                chunk = await file.read(read_size)
+                if not chunk:
+                    break
+                
+                total += len(chunk)
                 out.write(chunk)
+                
         if total == 0:
             dest.unlink(missing_ok=True)
             async with get_db_session() as session:
@@ -153,6 +164,7 @@ async def webapp_upload(
                 u2 = await us.get_by_id(user_id)
                 if u2:
                     await us.rollback_daily_job_increment(u2)
+                await session.commit()
             raise HTTPException(status_code=400, detail="empty_file")
     except HTTPException:
         raise
@@ -422,6 +434,8 @@ async def webapp_download_result(
     t: Annotated[Optional[str], Query(description="Подписанный токен из сообщения бота")] = None,
     x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None,
 ):
+    from core.file_utils import validate_file_path
+    
     job_uuid = _normalize_job_uuid(job_uuid)
     tg_id = _resolve_result_telegram_id(job_uuid, t, x_telegram_init_data)
 
@@ -431,14 +445,27 @@ async def webapp_download_result(
         raise HTTPException(status_code=404, detail="not_found")
     if job.status != JobStatus.done:
         raise HTTPException(status_code=409, detail="not_ready")
+    
     path = job.temp_processed_path
-    if not path or not Path(path).is_file():
+    if not path:
+        raise HTTPException(status_code=410, detail="file_gone")
+    
+    # SECURITY FIX: Проверка Path Traversal
+    allowed_dirs = [
+        settings.temp_processed_dir,
+        settings.temp_upload_dir,
+    ]
+    
+    try:
+        validated_path = validate_file_path(path, allowed_dirs)
+    except ValueError as e:
+        logger.error(f"Path validation failed for job {job_uuid}: {e}")
         raise HTTPException(status_code=410, detail="file_gone")
 
     fn = _result_download_filename(job)
     return FileResponse(
-        path,
+        validated_path,
         filename=fn,
-    media_type="application/octet-stream",
-    headers={"X-Accel-Redirect": f"{settings.x_accel_prefix}{path.name}"} if settings.use_x_accel_redirect else None
-)
+        media_type="application/octet-stream",
+        headers={"X-Accel-Redirect": f"{settings.x_accel_prefix}{validated_path.name}"} if settings.use_x_accel_redirect else None
+    )

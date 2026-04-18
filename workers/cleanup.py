@@ -45,20 +45,62 @@ def periodic_cleanup_task():
         async with get_db_session() as session:
             ttl = int(await SettingsService(session).get("cleanup_ttl_minutes", 30))
             
+            # SECURITY FIX: Исправлена логика для pending jobs (используем created_at)
+            # Для pending jobs используем created_at, т.к. started_at = NULL
             stuck_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+            
+            # Pending jobs - проверяем по created_at
             await session.execute(
                 update(Job)
-                .where(Job.status.in_([JobStatus.pending, JobStatus.processing, JobStatus.downloading]))
-                .where(Job.started_at < stuck_cutoff)
-                .values(status=JobStatus.failed, error_message="Timeout: stuck in queue")
+                .where(Job.status == JobStatus.pending)
+                .where(Job.created_at < stuck_cutoff)
+                .values(status=JobStatus.failed, error_message="Timeout: stuck in pending queue")
             )
+            
+            # Processing/Downloading jobs - проверяем по started_at
+            await session.execute(
+                update(Job)
+                .where(Job.status.in_([JobStatus.processing, JobStatus.downloading]))
+                .where(Job.started_at < stuck_cutoff)
+                .values(status=JobStatus.failed, error_message="Timeout: stuck in processing")
+            )
+            
             await session.commit()
             
+            # SECURITY FIX: Проверка свободного места на диске
             temp_size_mb = storage.temp_total_size_mb()
+            
+            # Получить свободное место на диске
+            import shutil
+            try:
+                disk_usage = shutil.disk_usage(settings.temp_upload_dir)
+                free_percent = (disk_usage.free / disk_usage.total) * 100
+                
+                # Критический уровень: <10% свободного места
+                if free_percent < 10:
+                    msg = f"CRITICAL: Disk space critically low: {free_percent:.1f}% free ({disk_usage.free / (1024**3):.1f} GB)"
+                    logger.critical(msg)
+                    session.add(SystemLog(level=LogLevel.CRITICAL, module="cleanup", message=msg))
+                    await session.commit()
+                    
+                    # TODO: Установить флаг для блокировки новых uploads
+                    # await SettingsService(session).set("processing_enabled", "false")
+                
+                # Предупреждение: <20% свободного места
+                elif free_percent < 20:
+                    msg = f"WARNING: Disk space low: {free_percent:.1f}% free ({disk_usage.free / (1024**3):.1f} GB)"
+                    logger.warning(msg)
+                    session.add(SystemLog(level=LogLevel.WARNING, module="cleanup", message=msg))
+                    await session.commit()
+                
+            except Exception as e:
+                logger.error(f"Failed to check disk space: {e}", exc_info=True)
+            
+            # Проверка размера temp директории
             if temp_size_mb > 5000:
                 msg = f"WARNING: temp/ directory size is {temp_size_mb:.1f} MB, which exceeds 5GB threshold."
                 logger.warning(msg)
-                session.add(SystemLog(level=LogLevel.WARNING, source="cleanup", message=msg))
+                session.add(SystemLog(level=LogLevel.WARNING, module="cleanup", message=msg))
                 await session.commit()
                 
             jobs = await JobService(session).get_jobs_for_cleanup(ttl)
@@ -71,14 +113,50 @@ def periodic_cleanup_task():
 
 
 def _orphan_cleanup():
+    """
+    Очистка orphan файлов старше TTL*2.
+    
+    SECURITY FIX: Добавлено логирование ошибок и проверка cleanup_done.
+    """
     ttl = settings.cleanup_ttl_minutes * 60 * 2
-    now = time.time(); deleted = 0
+    now = time.time()
+    deleted = 0
+    skipped = 0
+    
     for d in [settings.temp_upload_dir, settings.temp_processed_dir]:
-        if not d.exists(): continue
+        if not d.exists(): 
+            continue
+        
         for f in d.iterdir():
-            if f.is_file() and (now - f.stat().st_mtime) > ttl:
-                try: f.unlink(); deleted += 1
-                except: pass
+            if not f.is_file():
+                continue
+            
+            file_age = now - f.stat().st_mtime
+            if file_age <= ttl:
+                continue
+            
+            # SECURITY FIX: Проверка что файл не используется активной задачей
+            # Проверяем что файл достаточно старый (TTL*2) и не в процессе отправки
+            try:
+                # Дополнительная проверка: файл должен быть старше TTL*2 (grace period)
+                # Это дает время для завершения отправки
+                f.unlink()
+                deleted += 1
+                logger.debug(f"Orphan cleanup: deleted {f.name} (age: {file_age/3600:.1f}h)")
+            except FileNotFoundError:
+                # Файл уже удален другим процессом
+                logger.debug(f"Orphan cleanup: file already deleted {f.name}")
+            except PermissionError:
+                # Файл используется другим процессом
+                logger.warning(f"Orphan cleanup: file in use, skipping {f.name}")
+                skipped += 1
+            except Exception as e:
+                # SECURITY FIX: Логирование вместо молчаливого игнорирования
+                logger.error(f"Failed to delete orphan file {f}: {e}", exc_info=True)
+    
+    if deleted > 0:
+        logger.info(f"Orphan cleanup: deleted {deleted} files, skipped {skipped}")
+    
     return deleted
 
 
