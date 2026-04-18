@@ -1,0 +1,26 @@
+# Cron задачи для автоматизации MetaCleaner Bot
+# Установка: crontab -e
+
+# Backup базы данных каждые 6 часов
+0 */6 * * * /app/metacleaner_bot/scripts/backup_database.sh >> /var/log/metacleaner/backup.log 2>&1
+
+# Health check каждые 5 минут
+*/5 * * * * /usr/bin/python3 /app/metacleaner_bot/scripts/health_check.py >> /var/log/metacleaner/health.log 2>&1 || /app/metacleaner_bot/scripts/alert_health_failure.sh
+
+# Очистка старых логов каждый день в 3:00
+0 3 * * * find /app/metacleaner_bot/logs -name "*.log" -mtime +30 -delete
+
+# Очистка старых backups каждый день в 4:00
+0 4 * * * find /var/backups/metacleaner -name "*.sql.gz" -mtime +30 -delete
+
+# Мониторинг размера temp директории каждый час
+0 * * * * du -sh /app/metacleaner_bot/temp >> /var/log/metacleaner/disk_usage.log
+
+# Проверка зависших задач каждые 30 минут
+*/30 * * * * /usr/bin/python3 /app/metacleaner_bot/scripts/check_stuck_jobs.py
+
+# Еженедельный отчет по воскресеньям в 23:00
+0 23 * * 0 /app/metacleaner_bot/scripts/weekly_report.sh
+
+# Ежемесячный тест восстановления (1-е число в 2:00)
+0 2 1 * * /app/metacleaner_bot/scripts/test_restore.sh >> /var/log/metacleaner/test_restore.log 2>&1

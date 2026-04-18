@@ -23,6 +23,11 @@ pytest-asyncio==0.23.6
 pytest-mock==3.14.0
 httpx==0.27.0
 pyyaml==6.0.1
+python-magic==0.4.27
+
+# Мониторинг и алерты (опционально)
+sentry-sdk==2.0.0
+prometheus-client==0.20.0
 
 # JavaScript runtime для yt-dlp (устанавливать вручную на сервере)
 # apt-get install -y nodejs
