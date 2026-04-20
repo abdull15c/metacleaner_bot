@@ -1,5 +1,4 @@
 """Ограниченный набор HTML для Telegram (parse_mode=HTML). Убирает script/on* и лишние теги."""
-import re
 import bleach
 
 # https://core.telegram.org/bots/api#html-style
@@ -11,15 +10,23 @@ _ALLOWED_ATTRS = {"a": ["href"]}
 
 
 def sanitize_broadcast_html(raw: str, max_len: int = 4090) -> str:
+    """
+    Санитизация HTML для Telegram broadcast.
+    
+    SECURITY FIX: Убраны regex (могут быть обойдены), полагаемся только на bleach.
+    """
     if not raw or not raw.strip():
         return ""
+    
     s = raw.strip()[: max_len + 64]
-    s = re.sub(r"(?is)<script[^>]*>.*?</script>", "", s)
-    s = re.sub(r"(?i)\son\w+\s*=", " data-removed=", s)
+    
+    # SECURITY FIX: Убраны regex для <script> и on* атрибутов
+    # bleach.clean() уже удаляет все неразрешенные теги и атрибуты
     clean = bleach.clean(
         s,
         tags=list(_ALLOWED_TAGS),
         attributes=_ALLOWED_ATTRS,
         strip=True,
     )
+    
     return clean[:max_len]

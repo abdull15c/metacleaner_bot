@@ -14,6 +14,9 @@ async def error_handler(event: ErrorEvent) -> bool:
     elif event.update.callback_query and event.update.callback_query.message:
         msg = event.update.callback_query.message
     if msg:
-        try: await msg.answer("❌ Внутренняя ошибка. Попробуйте позже.")
-        except: pass
+        try: 
+            await msg.answer("❌ Внутренняя ошибка. Попробуйте позже.")
+        except Exception as e:
+            # SECURITY FIX: Логирование вместо молчаливого игнорирования
+            logger.error(f"Failed to send error message to user: {e}", exc_info=True)
     return True

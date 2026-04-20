@@ -75,8 +75,39 @@ class Settings(BaseSettings):
     @field_validator("admin_secret_key")
     @classmethod
     def key_long_enough(cls, v):
-        if len(v) < 16:
-            raise ValueError("ADMIN_SECRET_KEY must be at least 16 chars")
+        # SECURITY FIX: Увеличен минимум до 32 символов
+        if len(v) < 32:
+            raise ValueError(
+                "ADMIN_SECRET_KEY must be at least 32 chars. "
+                "Generate: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+            )
+        
+        # SECURITY FIX: Проверка на слабые/дефолтные значения
+        weak_keys = {
+            'change_this_to_a_random_32_char_string',
+            'change_this_to_a_random_32_char_string_here',
+            'secret',
+            'password',
+            'admin',
+            'admin123',
+            '12345678901234567890123456789012',
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        }
+        
+        if v.lower() in weak_keys or v in weak_keys:
+            raise ValueError(
+                "ADMIN_SECRET_KEY contains weak/default value. "
+                "Generate strong key: python -c 'import secrets; print(secrets.token_urlsafe(32))'"
+            )
+        
+        # Проверка на минимальную энтропию (хотя бы буквы и цифры)
+        has_letter = any(c.isalpha() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        if not (has_letter and has_digit):
+            raise ValueError(
+                "ADMIN_SECRET_KEY must contain both letters and digits for better security"
+            )
+        
         return v
 
     @field_validator("admin_session_secret")

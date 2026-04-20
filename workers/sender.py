@@ -165,7 +165,9 @@ def send_result_task(self, job_uuid):
                 logger.exception(f"Send error job {job_uuid}")
                 try:
                     await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
-                except: pass
+                except Exception as update_error:
+                    # SECURITY FIX: Логирование вместо молчаливого игнорирования
+                    logger.error(f"Failed to update job status after send error: {update_error}", exc_info=True)
                 raise self.retry(exc=e)
     return asyncio.run(_run())
 

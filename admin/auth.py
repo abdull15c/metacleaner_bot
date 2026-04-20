@@ -32,16 +32,17 @@ def get_token(request: Request): return request.cookies.get(COOKIE)
 
 
 def set_cookie(response, admin_id):
+    # SECURITY FIX: SameSite=strict для защиты от CSRF через top-level navigation
     response.set_cookie(
         COOKIE, create_token(admin_id),
-        httponly=True, max_age=MAX_AGE, samesite="lax", path="/",
+        httponly=True, max_age=MAX_AGE, samesite="strict", path="/",
         secure=settings.admin_cookie_secure,
     )
 
 
 def clear_cookie(response):
     response.delete_cookie(
-        COOKIE, path="/", samesite="lax", secure=settings.admin_cookie_secure,
+        COOKIE, path="/", samesite="strict", secure=settings.admin_cookie_secure,
     )
 
 

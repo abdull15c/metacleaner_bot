@@ -11,6 +11,7 @@ from core.services.job_service import JobService
 from core.services.log_service import LogService
 from core.services.settings_service import SettingsService
 from core.services.user_service import UserService
+from core.platform_detect import validate_url_security
 
 router = Router(name="youtube")
 logger = logging.getLogger(__name__)
@@ -34,6 +35,14 @@ CONSENT = """
 async def handle_url(message: Message, state: FSMContext, db_user: User):
     # This handler is now called from download.py if platform is youtube
     text = message.text or ""
+    
+    # SECURITY: Валидация URL на SSRF
+    is_valid, error_msg = validate_url_security(text)
+    if not is_valid:
+        await message.answer(f"❌ Недопустимый URL: {error_msg}")
+        logger.warning(f"Blocked YouTube URL from user {db_user.telegram_id}: {error_msg}")
+        return
+    
     async with get_db_session() as session:
         ss = SettingsService(session)
         if not await ss.get("youtube_enabled", True):
@@ -62,20 +71,39 @@ async def consent_yes(callback: CallbackQuery, state: FSMContext, db_user: User)
     await state.clear()
     await callback.message.edit_reply_markup(reply_markup=None)
     tg = callback.from_user
-    logger.info(f"YouTube consent GRANTED user={tg.id} url={url}")
+    
+    # SECURITY FIX: Не логировать полный URL (может содержать токены)
+    from urllib.parse import urlparse
+    parsed_url = urlparse(url)
+    safe_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+    logger.info(f"YouTube consent GRANTED user={tg.id} domain={parsed_url.netloc}")
+    
     async with get_db_session() as session:
-        await LogService(session).info("youtube", "Consent granted", user_id=tg.id, url=url)
-        ss = SettingsService(session); us = UserService(session)
+        await LogService(session).info("youtube", "Consent granted", user_id=tg.id, url=safe_url)
+        ss = SettingsService(session); us = UserService(session); js = JobService(session)
         max_daily = int(await ss.get("max_daily_jobs_per_user", settings.max_daily_jobs_per_user))
         user = await session.get(User, db_user.id)
         if not user:
             user, _ = await us.get_or_create(telegram_id=tg.id, username=tg.username, first_name=tg.first_name)
+        
+        # SECURITY FIX: Проверка глобального лимита MAX_CONCURRENT_JOBS
+        max_concurrent = int(await ss.get("max_concurrent_jobs", settings.max_concurrent_jobs))
+        current_active = await js.count_active_jobs()
+        
+        if current_active >= max_concurrent:
+            await callback.message.answer(
+                f"⏳ Система перегружена. Активных задач: {current_active}/{max_concurrent}\n"
+                f"Попробуйте через несколько минут.", parse_mode="HTML"
+            )
+            await callback.answer()
+            return
+        
         if not await us.increment_daily_count(user, max_daily):
             await callback.message.answer(
                 f"⚠️ Дневной лимит задач исчерпан (<b>{max_daily}</b>/день).", parse_mode="HTML")
             await callback.answer()
             return
-        js = JobService(session)
+        
         job = await js.create_job(user_id=user.id, source_type=SourceType.youtube, source_url=url)
         await js.set_youtube_consent(job, True); await session.commit()
     status_msg = await callback.message.answer(

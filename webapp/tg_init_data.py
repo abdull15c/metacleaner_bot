@@ -13,6 +13,8 @@ def validate_webapp_init_data(init_data: str, bot_token: str, *, max_age_seconds
     """
     https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
     Возвращает распарсенный объект user (dict) при успехе, иначе None.
+    
+    SECURITY FIX: Улучшена валидация auth_date.
     """
     if not init_data or not bot_token:
         return None
@@ -20,20 +22,33 @@ def validate_webapp_init_data(init_data: str, bot_token: str, *, max_age_seconds
         pairs = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=False))
     except ValueError:
         return None
+    
     recv_hash = pairs.pop("hash", None)
     if not recv_hash:
         return None
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
-    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
-    calc = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(calc, recv_hash):
-        return None
+    
+    # SECURITY FIX: Проверка auth_date ДО проверки подписи (дешевле)
     try:
         auth_date = int(pairs.get("auth_date", 0))
     except (TypeError, ValueError):
         return None
-    if auth_date and (time.time() - auth_date) > max_age_seconds:
+    
+    # SECURITY FIX: auth_date обязателен и должен быть > 0
+    if not auth_date or auth_date <= 0:
         return None
+    
+    # SECURITY FIX: Проверка времени ДО дорогостоящей криптографии
+    if (time.time() - auth_date) > max_age_seconds:
+        return None
+    
+    # Проверка подписи
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
+    calc = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    
+    if not hmac.compare_digest(calc, recv_hash):
+        return None
+    
     raw_user = pairs.get("user")
     if not raw_user:
         return None

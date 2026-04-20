@@ -1,15 +1,43 @@
 [Unit]
 Description=MetaCleaner Celery Worker
-After=network.target redis.service
-Wants=redis.service
+After=network.target redis.service postgresql.service
+Wants=redis.service postgresql.service
 
 [Service]
 Type=simple
-WorkingDirectory=/root/metacleaner_bot
+WorkingDirectory=/opt/metacleaner_bot
+
+# SECURITY FIX: Запуск от непривилегированного пользователя
+User=metacleaner
+Group=metacleaner
+
+# SECURITY FIX: Изоляция и ограничения
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ReadWritePaths=/opt/metacleaner_bot/temp /opt/metacleaner_bot/logs /opt/metacleaner_bot/metacleaner.db /opt/metacleaner_bot/metacleaner.db-shm /opt/metacleaner_bot/metacleaner.db-wal
+
+# Ограничения ресурсов (больше для обработки видео)
+MemoryLimit=4G
+CPUQuota=200%
+TasksMax=100
+
+# Переменные окружения
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/root/metacleaner_bot/.venv/bin/python -m celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo
-Restart=always
-RestartSec=5
+EnvironmentFile=-/opt/metacleaner_bot/.env
+
+ExecStart=/opt/metacleaner_bot/.venv/bin/celery -A workers.celery_app worker --loglevel=info -Q video,cleanup,broadcast --pool=solo
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Install]
 WantedBy=multi-user.target

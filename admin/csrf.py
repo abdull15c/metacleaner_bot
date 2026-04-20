@@ -1,4 +1,5 @@
 import secrets
+import hmac
 from starlette.datastructures import FormData
 from starlette.requests import Request
 from fastapi import HTTPException
@@ -21,5 +22,7 @@ def verify_csrf(request: Request, form: FormData) -> None:
     else:
         got = str(got)
     expected = request.session.get("_csrf")
-    if not expected or got != expected:
+    
+    # SECURITY FIX: Использование hmac.compare_digest для защиты от timing attacks
+    if not expected or not hmac.compare_digest(got, expected):
         raise HTTPException(status_code=403, detail="CSRF validation failed")
