@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request, Depends, Header, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -11,6 +11,7 @@ from admin.login_rate import check_admin_login_rate
 from admin.security_headers import SecurityHeadersMiddleware
 from core.config import settings as app_settings
 from core.database import get_db_session, get_db
+from core.sql_utils import escape_like_pattern
 from core.telegram_html import sanitize_broadcast_html
 from webapp.bootstrap import mount_webapp
 
@@ -24,9 +25,18 @@ except ImportError:
     pass
 
 @app.post("/webhook")
-async def telegram_webhook(request: Request):
+async def telegram_webhook(
+    request: Request,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
+):
     from aiogram.types import Update
-    from bot.main import bot, dp
+    from bot.main import bot, dp, ensure_runtime
+
+    if app_settings.telegram_webhook_secret:
+        if x_telegram_bot_api_secret_token != app_settings.telegram_webhook_secret:
+            raise HTTPException(status_code=403, detail="invalid_webhook_secret")
+
+    await ensure_runtime(bot)
     update = Update.model_validate(await request.json(), context={"bot": bot})
     await dp.feed_update(bot, update)
     return {"ok": True}
@@ -36,8 +46,7 @@ async def health_check():
     import redis.asyncio as aioredis
     from sqlalchemy import text
     from core.database import engine
-    from core.config import settings
-    
+
     db_ok = False
     try:
         async with engine.connect() as conn:
@@ -48,7 +57,7 @@ async def health_check():
         
     redis_ok = False
     try:
-        r = aioredis.from_url(str(settings.redis_url))
+        r = aioredis.from_url(str(app_settings.redis_url))
         await r.ping()
         redis_ok = True
         await r.close()
@@ -130,6 +139,7 @@ async def admin_root(): return RedirectResponse("/admin/dashboard", status_code=
 @app.get("/admin/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
     from core.services.job_service import JobService
+    from core.services.settings_service import SettingsService
     from core.services.user_service import UserService
     from core.models import JobStatus
     from storage.local import storage
@@ -210,12 +220,13 @@ async def jobs_list(request: Request, page: int = 1, q: str = "", status: str = 
     
     stmt = select(Job).options(selectinload(Job.user))
     
-    q_val = q.strip()
+    # SECURITY: Экранирование спецсимволов LIKE для защиты от SQL Injection
+    q_val = escape_like_pattern(q.strip())
     if q_val:
         stmt = stmt.join(User, isouter=True).where(
             or_(
-                Job.uuid.ilike(f"%{q_val}%"),
-                User.username.ilike(f"%{q_val}%")
+                Job.uuid.ilike(f"%{q_val}%", escape='\\'),
+                User.username.ilike(f"%{q_val}%", escape='\\')
             )
         )
         
@@ -226,8 +237,8 @@ async def jobs_list(request: Request, page: int = 1, q: str = "", status: str = 
     if q_val:
         count_stmt = count_stmt.join(User, isouter=True).where(
             or_(
-                Job.uuid.ilike(f"%{q_val}%"),
-                User.username.ilike(f"%{q_val}%")
+                Job.uuid.ilike(f"%{q_val}%", escape='\\'),
+                User.username.ilike(f"%{q_val}%", escape='\\')
             )
         )
     if status and hasattr(JobStatus, status):
@@ -264,13 +275,14 @@ async def users_list(request: Request, page: int = 1, q: str = "", session: Asyn
     limit = 30; offset = (page-1)*limit
     stmt = select(User)
     
-    q_val = q.strip()
+    # SECURITY: Экранирование спецсимволов LIKE
+    q_val = escape_like_pattern(q.strip())
     if q_val:
         stmt = stmt.where(
             or_(
-                User.username.ilike(f"%{q_val}%"),
-                User.first_name.ilike(f"%{q_val}%"),
-                cast(User.telegram_id, String).ilike(f"%{q_val}%")
+                User.username.ilike(f"%{q_val}%", escape='\\'),
+                User.first_name.ilike(f"%{q_val}%", escape='\\'),
+                cast(User.telegram_id, String).ilike(f"%{q_val}%", escape='\\')
             )
         )
     
@@ -278,9 +290,9 @@ async def users_list(request: Request, page: int = 1, q: str = "", session: Asyn
     if q_val:
         count_stmt = count_stmt.where(
             or_(
-                User.username.ilike(f"%{q_val}%"),
-                User.first_name.ilike(f"%{q_val}%"),
-                cast(User.telegram_id, String).ilike(f"%{q_val}%")
+                User.username.ilike(f"%{q_val}%", escape='\\'),
+                User.first_name.ilike(f"%{q_val}%", escape='\\'),
+                cast(User.telegram_id, String).ilike(f"%{q_val}%", escape='\\')
             )
         )
     
@@ -363,8 +375,6 @@ async def delete_sponsor(sid: int, request: Request, session: AsyncSession = Dep
 @app.post("/admin/sponsors/toggle")
 async def toggle_force_sub(request: Request, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
     from core.services.settings_service import SettingsService
-    import redis.asyncio as aioredis
-    from core.config import settings
     form = await request.form()
     verify_csrf(request, form)
     
@@ -374,10 +384,16 @@ async def toggle_force_sub(request: Request, session: AsyncSession = Depends(get
     await svc.set("force_sub_enabled", new_val, admin.id)
     await session.commit()
     
-    # Sync to Redis
-    r = aioredis.from_url(str(settings.redis_url))
-    await r.set("settings:force_sub:enabled", new_val)
-    await r.close()
+    # Best-effort sync to Redis cache; DB value is source of truth.
+    try:
+        import redis.asyncio as aioredis
+        from core.config import settings
+
+        r = aioredis.from_url(str(settings.redis_url))
+        await r.set("settings:force_sub:enabled", new_val)
+        await r.close()
+    except Exception:
+        logger.warning("Force-sub Redis cache sync failed", exc_info=True)
     
     return RedirectResponse("/admin/sponsors", status_code=303)
 

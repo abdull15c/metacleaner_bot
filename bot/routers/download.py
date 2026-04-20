@@ -1,19 +1,19 @@
+import asyncio
 import logging
+import json
+import subprocess
+import uuid
+from datetime import datetime
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 
-from core.platform_detect import detect_platform, is_supported_url
+from core.platform_detect import detect_platform, validate_url_security
 from core.database import get_db_session
-from core.models import SiteDownloadJob, JobStatus, DownloadFormat, User
-from core.services.user_service import UserService
-from bot.states.youtube import YouTubeConsentStates  # Using an existing FSM context strategy
+from core.models import SiteDownloadJob, JobStatus, User
 from bot.routers.youtube import handle_url as handle_youtube_url
 from sqlalchemy import select, func
-from datetime import datetime
-import subprocess
-import json
-import uuid
 
 router = Router(name="download")
 logger = logging.getLogger(__name__)
@@ -56,6 +56,17 @@ def consent_keyboard():
         [InlineKeyboardButton(text="Нет, отмена", callback_data="dl_consent:no")]
     ])
 
+
+def _fetch_video_info(url: str, platform: str) -> dict:
+    cmd = ["yt-dlp", "--dump-json", "--no-playlist", "--quiet", url]
+    if platform == "youtube":
+        cmd.extend(["--js-runtimes", "node", "--extractor-args", "youtube:player_client=web,default"])
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "yt-dlp failed")
+    return json.loads(result.stdout)
+
 @router.message(F.text.startswith("/download"))
 async def download_command(message: Message):
     await message.answer(
@@ -71,6 +82,14 @@ async def download_command(message: Message):
 @router.message(F.text.regexp(r"https?://"))
 async def handle_any_url(message: Message, state: FSMContext, db_user: User):
     url = message.text.strip()
+    
+    # SECURITY: Валидация URL на SSRF и другие атаки
+    is_valid, error_msg = validate_url_security(url)
+    if not is_valid:
+        await message.answer(f"❌ Недопустимый URL: {error_msg}")
+        logger.warning(f"Blocked URL from user {db_user.telegram_id}: {error_msg}")
+        return
+    
     platform = detect_platform(url)
     
     if platform == "unknown":
@@ -102,16 +121,7 @@ async def dl_consent_cb(callback: CallbackQuery, state: FSMContext):
     platform = data.get("platform")
     
     try:
-        cmd = ["yt-dlp", "--dump-json", "--no-playlist", "--quiet", url]
-        if platform == "youtube":
-            cmd.extend(["--js-runtimes", "node", "--extractor-args", "youtube:player_client=web,default"])
-            
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if r.returncode != 0:
-            await callback.message.edit_text("❌ Ошибка при получении информации.")
-            return
-            
-        info = json.loads(r.stdout)
+        info = await asyncio.to_thread(_fetch_video_info, url, platform)
         title = info.get("title", "Video")
         await state.update_data(dl_title=title)
         
@@ -119,7 +129,7 @@ async def dl_consent_cb(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(f"🎥 <b>{title[:100]}</b>\n\nВыберите формат:", parse_mode="HTML", reply_markup=format_keyboard())
     except Exception as e:
         logger.error(f"yt-dlp info error: {e}")
-        await callback.message.edit_text("❌ Внутренняя ошибка.")
+        await callback.message.edit_text("❌ Ошибка при получении информации о видео.")
 
 
 @router.callback_query(F.data.startswith("dl_fmt:"))
