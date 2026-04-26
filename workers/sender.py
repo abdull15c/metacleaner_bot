@@ -80,6 +80,7 @@ def send_result_task(self, job_uuid):
                 await svc.update_status(job, JobStatus.failed, "No telegram_id")
                 await session.commit()
                 return {"error": "no tg_id"}
+            bot = None
             try:
                 began = await svc.try_begin_sending(job_uuid)
                 if not began:
@@ -141,10 +142,10 @@ def send_result_task(self, job_uuid):
                         token = create_result_download_token(job.uuid, tg_id)
                         link = f"{base}/api/webapp/result/{job.uuid}?t={quote(token)}"
                         msg = (
-                            f"✅ <b>Метаданные очищены.</b>\n"
+                            f"{labels.get(action, labels['clean'])}\n"
                             f"Файл <b>{_fmt(proc_size)}</b> больше лимита отправки бота (~{settings.telegram_bot_max_send_document_mb} МБ).\n\n"
                             f"<a href=\"{link}\">⬇️ Скачать результат</a>\n\n"
-                            f"Ссылка действительна несколько дней. Задача <code>#{job.uuid[:8]}</code>\n"
+                            f"Ссылка действительна {settings.cleanup_ttl_minutes} минут. Задача <code>#{job.uuid[:8]}</code>\n"
                             f"Либо откройте Mini App — там тоже можно скачать файл."
                         )
                         await _send_msg(bot, tg_id, msg)
@@ -159,16 +160,22 @@ def send_result_task(self, job_uuid):
                     await svc.update_status(job, JobStatus.done)
                     await session.commit()
                     ok = True
-                await bot.session.close()
                 return {"status": "ok" if ok else "send_failed"}
             except Exception as e:
                 logger.exception(f"Send error job {job_uuid}")
                 try:
-                    await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
+                    if self.request.retries >= self.max_retries:
+                        await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
+                        return {"error": str(e)}
+                    await svc.update_status(job, JobStatus.processing)
+                    await session.commit()
                 except Exception as update_error:
                     # SECURITY FIX: Логирование вместо молчаливого игнорирования
                     logger.error(f"Failed to update job status after send error: {update_error}", exc_info=True)
                 raise self.retry(exc=e)
+            finally:
+                if bot is not None:
+                    await bot.session.close()
     return asyncio.run(_run())
 
 
@@ -183,9 +190,11 @@ def notify_failure_task(job_uuid):
             job = await svc.get_by_uuid(job_uuid)
             if not job or not job.user: return
             bot = Bot(token=settings.bot_token)
-            await _send_msg(bot, job.user.telegram_id,
-                f"❌ При обработке возникла ошибка.\n"
-                f"Задача <code>#{job.uuid[:8]}</code> завершена с ошибкой.\n"
-                f"Попробуйте ещё раз.")
-            await bot.session.close()
+            try:
+                await _send_msg(bot, job.user.telegram_id,
+                    f"❌ При обработке возникла ошибка.\n"
+                    f"Задача <code>#{job.uuid[:8]}</code> завершена с ошибкой.\n"
+                    f"Попробуйте ещё раз.")
+            finally:
+                await bot.session.close()
     asyncio.run(_run())

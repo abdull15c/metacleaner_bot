@@ -10,66 +10,91 @@
 <body>
   <div class="shell">
     <div class="card">
-      <h1>Очистка метаданных</h1>
-      <p class="lead">Загрузите видео <b>напрямую на сервер</b> — удобно для крупных файлов, которые неудобно слать через чат бота.</p>
-      <div class="tabs" style="display:flex;margin-bottom:1rem;gap:10px;border-bottom:1px solid var(--tg-theme-hint-color, #ccc);">
-        <button type="button" class="tab-btn active" id="tab-upload" style="background:none;border:none;padding:10px;cursor:pointer;color:var(--tg-theme-text-color, #000);border-bottom:2px solid var(--tg-theme-button-color, #3b82f6);font-weight:600;">Очистка</button>
-        <button type="button" class="tab-btn" id="tab-download" style="background:none;border:none;padding:10px;cursor:pointer;color:var(--tg-theme-hint-color, #888);font-weight:600;">Скачать</button>
-        <button type="button" class="tab-btn" id="tab-history" style="background:none;border:none;padding:10px;cursor:pointer;color:var(--tg-theme-hint-color, #888);font-weight:600;">Мои файлы</button>
+      <header class="hero">
+        <div class="hero-badge">MetaCleaner</div>
+        <h1>Чистые видео без лишних данных</h1>
+        <p class="lead">Удаляйте GPS, дату съёмки, устройство и служебные теги. Загружайте файл или скачивайте видео по ссылке прямо в Mini App.</p>
+      </header>
+
+      <div class="tabs" role="tablist" aria-label="Разделы Mini App">
+        <button type="button" class="tab-btn active" id="tab-upload">Очистка</button>
+        <button type="button" class="tab-btn" id="tab-download">Скачать</button>
+        <button type="button" class="tab-btn" id="tab-history">Мои файлы</button>
       </div>
 
       <div id="download-tab-content" style="display: none;">
-          <div id="download-step-1">
-              <input type="url" id="download-url" placeholder="Вставьте ссылку YouTube, TikTok, Instagram..." style="width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #ccc;">
-              <div style="font-size: 1.5rem; text-align: center; margin-bottom: 15px; letter-spacing: 10px;">
-                  <span title="YouTube">📺</span>
-                  <span title="TikTok">🎵</span>
-                  <span title="Instagram">📸</span>
-                  <span title="Twitter/X">🐦</span>
-                  <span title="VK">📘</span>
-                  <span title="Facebook">👥</span>
+          <div id="download-step-1" class="panel">
+              <div class="section-head">
+                <span class="section-icon">🔗</span>
+                <div>
+                  <h2>Скачать по ссылке</h2>
+                  <p>Поддерживаем популярные видео-платформы и можем сразу очистить метаданные.</p>
+                </div>
               </div>
-              <button id="btn-get-info" class="btn btn-primary" style="width: 100%;">Получить информацию</button>
+              <label class="field-label" for="download-url">Ссылка на видео</label>
+              <input type="url" id="download-url" class="input" placeholder="https://youtube.com/watch?v=...">
+              <div class="platform-row" aria-label="Поддерживаемые платформы">
+                  <span title="YouTube">YouTube</span>
+                  <span title="TikTok">TikTok</span>
+                  <span title="Instagram">Instagram</span>
+                  <span title="Twitter/X">X</span>
+                  <span title="VK">VK</span>
+                  <span title="Facebook">Facebook</span>
+              </div>
+              <button id="btn-get-info" class="btn btn-primary btn-block">Получить информацию</button>
           </div>
 
-          <div id="download-step-2" style="display: none; margin-top: 15px;">
-              <div style="text-align: center; margin-bottom: 15px;">
-                  <img id="dl-thumb" src="" alt="Thumbnail" style="max-width: 100%; border-radius: 8px; margin-bottom: 10px; max-height: 200px; object-fit: cover;">
-                  <h3 id="dl-title" style="font-size: 14px; margin-bottom: 5px;">Название видео</h3>
-                  <p id="dl-platform" style="font-size: 12px; color: var(--tg-theme-hint-color, #888); margin-bottom: 15px;">YouTube • 00:00</p>
+          <div id="download-step-2" class="panel" style="display: none;">
+              <div class="preview-card">
+                  <img id="dl-thumb" src="" alt="Превью видео" class="preview-image">
+                  <div class="preview-body">
+                    <h3 id="dl-title">Название видео</h3>
+                    <p id="dl-platform">YouTube • 00:00</p>
+                  </div>
               </div>
               
-              <div style="margin-bottom: 15px;">
-                  <label style="display:block; margin-bottom:5px; font-weight:bold; font-size: 0.9rem;">Выберите формат:</label>
-                  <select id="dl-format" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #ccc;"></select>
+              <div class="field-group format-field">
+                  <label class="field-label">Что скачать</label>
+                  <div class="media-switch" role="tablist" aria-label="Тип скачивания">
+                    <button type="button" class="media-switch-btn active" data-kind="video">Видео</button>
+                    <button type="button" class="media-switch-btn" data-kind="audio">Аудио</button>
+                  </div>
+                  <select id="dl-format" class="input sr-only" aria-label="Формат скачивания"></select>
+                  <div id="format-options" class="format-options" aria-live="polite"></div>
               </div>
               
-              <div style="margin-bottom: 20px;">
-                  <label style="display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer;">
-                      <input type="checkbox" id="dl-clean-metadata" style="transform: scale(1.2);">
-                      Очистить метаданные (удалить GPS, дату и др.)
+              <div class="option-card" id="metadata-option">
+                  <label class="toggle-row">
+                      <input type="checkbox" id="dl-clean-metadata">
+                      <span class="toggle-copy">
+                        <b>Очистить метаданные</b>
+                        <small>Удалить GPS, дату, устройство и служебные теги</small>
+                      </span>
                   </label>
               </div>
               
-              <button id="btn-start-download" class="btn btn-primary" style="width: 100%; margin-bottom: 10px;">Скачать</button>
-              <button id="btn-dl-back" class="btn btn-ghost" style="width: 100%;">Назад</button>
-          </div>
-
-          <div id="download-step-3" style="display: none; margin-top: 15px; text-align: center;">
-              <div class="loader" style="margin: 20px auto; border: 4px solid #f3f3f3; border-top: 4px solid var(--tg-theme-button-color, #3b82f6); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite;"></div>
-              <p id="dl-status-text" style="font-weight: 500;">Получаем информацию...</p>
-              <div style="margin-top: 30px; padding: 30px 10px; border: 2px dashed var(--tg-theme-hint-color, #ccc); color: var(--tg-theme-hint-color, #888); border-radius: 8px; font-size: 0.9rem;">
-                  Рекламный блок (место под баннер)
+              <div class="button-stack">
+                <button id="btn-start-download" class="btn btn-primary btn-block">Скачать</button>
+                <button id="btn-dl-back" class="btn btn-ghost btn-block">Назад</button>
               </div>
           </div>
 
-          <div id="download-step-4" style="display: none; margin-top: 15px; text-align: center;">
-              <div style="font-size: 40px; color: #10b981; margin-bottom: 10px;">✅</div>
-              <h3 style="margin-bottom: 10px;">Готово!</h3>
-              <p style="font-size: 0.85rem; color: #ef4444; margin-bottom: 20px;">Файл будет удалён через 30 минут</p>
+          <div id="download-step-3" class="panel processing-panel" style="display: none;">
+              <div class="loader"></div>
+              <h2>Работаем с файлом</h2>
+              <p id="dl-status-text">Скачиваем файл...</p>
+              <div class="progress-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+          </div>
+
+          <div id="download-step-4" class="panel success-panel" style="display: none;">
+              <div class="success-mark">✓</div>
+              <h2>Файл готов</h2>
+              <p>Скачайте результат сейчас. Временные файлы удаляются автоматически.</p>
               
-              <a id="btn-download-file" href="#" target="_blank" class="btn btn-primary" style="display: block; margin-bottom: 10px; text-decoration: none;">Скачать файл</a>
-              <button id="btn-dl-again" class="btn btn-ghost" style="width: 100%;">Скачать ещё</button>
+              <div class="button-stack">
+                <a id="btn-download-file" href="#" target="_blank" class="btn btn-primary btn-block">Скачать файл</a>
+                <button id="btn-dl-again" class="btn btn-ghost btn-block">Скачать ещё</button>
+              </div>
           </div>
       </div>
 
@@ -82,77 +107,51 @@
         
         <form id="up-form" class="upload-zone">
           <input type="file" id="file" accept="video/*,.mp4,.mkv,.mov,.avi,.webm,.m4v" hidden/>
-          <div id="drop-zone" class="drop-zone" style="border: 2px dashed var(--tg-theme-hint-color, #ccc); border-radius: 12px; padding: 30px 15px; text-align: center; cursor: pointer; transition: all 0.3s ease; margin-bottom: 15px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-            <div class="dz-icon" style="font-size: 2.5rem; margin-bottom: 10px;">📥</div>
-            <div class="dz-text" style="font-size: 1rem; font-weight: 500; margin-bottom: 5px;">Перетащите видео сюда или <span style="color: var(--tg-theme-button-color, #3b82f6);">выберите файл</span></div>
-            <div class="dz-subtext" style="font-size: 0.8rem; color: var(--tg-theme-hint-color, #888);">MP4, MKV, MOV, AVI, WebM (до 500 МБ)</div>
+          <div id="drop-zone" class="drop-zone">
+            <div class="dz-icon">⬆</div>
+            <div class="dz-text">Перетащите видео сюда или <span>выберите файл</span></div>
+            <div class="dz-subtext">MP4, MKV, MOV, AVI, WebM до 500 МБ</div>
           </div>
           
-          <div id="file-meta-container" style="display: none; background: rgba(59, 130, 246, 0.1); border-radius: 8px; padding: 12px; margin-bottom: 15px; align-items: center; gap: 10px;">
-            <div style="font-size: 1.5rem;">🎥</div>
-            <div style="flex-grow: 1; overflow: hidden;">
-              <div id="fname" style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.95rem;">Файл</div>
-              <div id="fsize" style="font-size: 0.8rem; color: var(--tg-theme-hint-color, #888);">0 MB</div>
+          <div id="file-meta-container" class="file-pill" style="display: none;">
+            <div class="file-icon">🎬</div>
+            <div class="file-copy">
+              <div id="fname">Файл</div>
+              <div id="fsize">0 MB</div>
             </div>
-            <button type="button" id="btn-clear" style="background: none; border: none; color: var(--tg-theme-hint-color, #888); cursor: pointer; font-size: 1.2rem; padding: 5px;">✖</button>
+            <button type="button" id="btn-clear" class="icon-btn" aria-label="Убрать файл">×</button>
           </div>
-        <div class="bar-wrap" id="bar-wrap" hidden>
-          <div class="bar" id="bar"></div>
-        </div>
-        <p class="err" id="err" hidden></p>
-        <p class="status" id="status"></p>
+          <div class="bar-wrap" id="bar-wrap" hidden>
+            <div class="bar" id="bar"></div>
+          </div>
+          <p class="err" id="err" hidden></p>
+          <p class="status" id="status"></p>
           <div class="done-actions" id="done-actions" hidden>
-            <button type="button" class="btn btn-primary" id="btn-download" style="margin-bottom: 10px;">Скачать результат</button>
-            <button type="button" class="btn btn-ghost" id="btn-reset" style="margin-bottom: 10px;">Очистить ещё</button>
+            <button type="button" class="btn btn-primary" id="btn-download">Скачать результат</button>
+            <button type="button" class="btn btn-ghost" id="btn-reset">Очистить ещё</button>
             {% if telegram_bot_username %}
             <button type="button" class="btn btn-ghost" id="btn-bot">Открыть бота</button>
             {% endif %}
           </div>
-          <button type="submit" class="btn btn-primary" id="submit" disabled>Загрузить файл</button>
+          <button type="submit" class="btn btn-primary btn-block" id="submit" disabled>Загрузить файл</button>
         </form>
       </div>
 
       <div id="history-tab-content" style="display: none;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-          <h3 style="margin: 0; font-size: 1.1rem;">Ваши загрузки</h3>
-          <button type="button" id="btn-refresh-history" style="background: none; border: none; color: var(--tg-theme-button-color, #3b82f6); cursor: pointer; display: flex; align-items: center; gap: 5px; padding: 5px;">
-            <span id="refresh-icon">🔄</span> Обновить
+        <div class="history-head">
+          <div>
+            <h2>Ваши загрузки</h2>
+            <p>Последние обработанные файлы</p>
+          </div>
+          <button type="button" id="btn-refresh-history" class="refresh-btn">
+            <span id="refresh-icon">↻</span> Обновить
           </button>
         </div>
         
-        <div id="history-list" style="display: flex; flex-direction: column; gap: 10px;">
-          <!-- Skeletons -->
-          <div class="history-item skeleton" style="background: rgba(0,0,0,0.05); border-radius: 8px; padding: 12px; min-height: 70px; display: flex; align-items: center; gap: 12px; animation: pulse 1.5s infinite;"></div>
-          <div class="history-item skeleton" style="background: rgba(0,0,0,0.05); border-radius: 8px; padding: 12px; min-height: 70px; display: flex; align-items: center; gap: 12px; animation: pulse 1.5s infinite; animation-delay: 0.2s;"></div>
+        <div id="history-list" class="history-list">
+          <div class="history-item skeleton"></div>
+          <div class="history-item skeleton"></div>
         </div>
-        
-        <style>
-          @keyframes pulse {
-            0% { opacity: 0.5; }
-            50% { opacity: 0.8; }
-            100% { opacity: 0.5; }
-          }
-          .history-item {
-            background: var(--tg-theme-bg-color, #fff);
-            border: 1px solid var(--tg-theme-hint-color, #eee);
-            border-radius: 10px;
-            padding: 12px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            transition: all 0.2s ease;
-          }
-          .history-item.done { border-left: 4px solid #10b981; }
-          .history-item.failed { border-left: 4px solid #ef4444; }
-          .history-item.processing { border-left: 4px solid #3b82f6; }
-          .hi-icon { font-size: 1.8rem; }
-          .hi-content { flex-grow: 1; overflow: hidden; }
-          .hi-title { font-weight: 600; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
-          .hi-meta { font-size: 0.75rem; color: var(--tg-theme-hint-color, #888); display: flex; gap: 10px; }
-          .hi-action { padding: 8px 12px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; font-size: 0.85rem; }
-          .hi-action.dl { background: var(--tg-theme-button-color, #3b82f6); color: var(--tg-theme-button-text-color, #fff); }
-          .hi-action.dl:disabled { background: var(--tg-theme-hint-color, #ccc); cursor: not-allowed; }
-        </style>
       </div>
 
     </div>

@@ -36,5 +36,7 @@ def check_admin_login_rate(request: Request) -> None:
     except HTTPException:
         raise
     except Exception:
-        # If Redis is down, we don't block login, just log warning if we had logger
-        pass
+        raise HTTPException(
+            status_code=503,
+            detail="Сервис входа временно недоступен. Попробуйте позже.",
+        )

@@ -5,11 +5,28 @@ Wants=redis.service
 
 [Service]
 Type=simple
-WorkingDirectory=/root/metacleaner_bot
+WorkingDirectory=/opt/metacleaner_bot
+
+User=metacleaner
+Group=metacleaner
+
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+ReadWritePaths=/opt/metacleaner_bot/temp /opt/metacleaner_bot/logs /opt/metacleaner_bot/metacleaner.db /opt/metacleaner_bot/metacleaner.db-shm /opt/metacleaner_bot/metacleaner.db-wal
+
+MemoryLimit=512M
+CPUQuota=50%
+TasksMax=100
+
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/root/metacleaner_bot/.venv/bin/python -m admin
-Restart=always
-RestartSec=5
+EnvironmentFile=-/opt/metacleaner_bot/.env
+ExecStart=/opt/metacleaner_bot/.venv/bin/python -m admin
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Install]
 WantedBy=multi-user.target

@@ -64,7 +64,8 @@ def download_youtube_video(url, output_dir, cookies_path: Optional[Path], proxy:
             raise DownloadError("Файл слишком большой")
     except DownloadError:
         raise
-    except:
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        logger.warning("yt-dlp metadata parse failed for %s: %s", safe_url, e)
         title = "video"
     dl_r = subprocess.run(
         [
@@ -140,6 +141,13 @@ def download_youtube_task(self, job_uuid):
                 return {"error":str(e)}
             except Exception as e:
                 logger.exception(f"Download error job {job_uuid}")
-                await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
+                if self.request.retries >= self.max_retries:
+                    await svc.update_status(job, JobStatus.failed, str(e)[:200])
+                    await session.commit()
+                    from workers.sender import notify_failure_task
+                    notify_failure_task.delay(job_uuid)
+                    return {"error": str(e)}
+                await svc.update_status(job, JobStatus.pending)
+                await session.commit()
                 raise self.retry(exc=e)
     return asyncio.run(_run())

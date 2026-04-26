@@ -17,14 +17,14 @@ from sqlalchemy import select
 from core.config import settings
 from core.constants import SUPPORTED_VIDEO_EXTENSIONS
 from core.database import get_db, get_db_session
-from core.models import JobStatus, SourceType
+from core.models import Job, JobStatus, SourceType
 from core.services.job_service import JobService
 from core.services.settings_service import SettingsService
 from core.services.user_service import UserService
 from webapp.result_token import parse_result_download_token
 from webapp.tg_init_data import telegram_user_id, validate_webapp_init_data
 from core.models import SiteDownloadJob, JobStatus, DownloadFormat
-from core.platform_detect import detect_platform, is_supported_url
+from core.platform_detect import detect_platform, validate_url_security
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +250,42 @@ async def webapp_job_status(
     }
 
 
+@router.get("/api/webapp/jobs")
+async def webapp_jobs(
+    session: AsyncSession = Depends(get_db),
+    x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None,
+):
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=401, detail="missing_init_data")
+    tg_id = telegram_user_id(x_telegram_init_data.strip(), settings.bot_token)
+    if tg_id is None:
+        raise HTTPException(status_code=401, detail="invalid_init_data")
+
+    user_service = UserService(session)
+    user = await user_service.get_by_telegram_id(tg_id)
+    if not user:
+        return {"jobs": []}
+
+    result = await session.execute(
+        select(Job)
+        .where(Job.user_id == user.id)
+        .order_by(Job.created_at.desc())
+        .limit(50)
+    )
+    jobs = []
+    for job in result.scalars().all():
+        proc_path = job.temp_processed_path
+        proc_ok = bool(proc_path and Path(proc_path).is_file())
+        jobs.append({
+            "uuid": job.uuid,
+            "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            "original_filename": job.original_filename,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "result_download_available": job.status == JobStatus.done and proc_ok,
+        })
+    return {"jobs": jobs}
+
+
 class DownloadInfoRequest(BaseModel):
     url: str
 
@@ -258,6 +294,24 @@ class DownloadStartRequest(BaseModel):
     format: str
     clean_metadata: bool
 
+
+def _validate_download_url(url: str) -> tuple[str, str]:
+    url = (url or "").strip()
+    is_valid, error_msg = validate_url_security(url)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"invalid_url: {error_msg}")
+    platform = detect_platform(url)
+    if platform == "unknown":
+        raise HTTPException(status_code=400, detail="unsupported_platform")
+    return url, platform
+
+
+def _validate_download_format(format_value: str) -> str:
+    try:
+        return DownloadFormat(format_value).value
+    except ValueError:
+        raise HTTPException(status_code=400, detail="unsupported_format")
+
 @router.post("/api/webapp/download/info")
 async def download_info(
     req: DownloadInfoRequest, 
@@ -265,10 +319,10 @@ async def download_info(
 ):
     if not x_telegram_init_data:
         raise HTTPException(status_code=401, detail="missing_init_data")
-    url = req.url
-    platform = detect_platform(url)
-    if platform == "unknown":
-        return JSONResponse({"supported": False}, status_code=400)
+    tg_id = telegram_user_id(x_telegram_init_data.strip(), settings.bot_token)
+    if tg_id is None:
+        raise HTTPException(status_code=401, detail="invalid_init_data")
+    url, platform = _validate_download_url(req.url)
     
     try:
         from core.config import settings
@@ -278,19 +332,20 @@ async def download_info(
             
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
-            return JSONResponse({"error": "Failed to get info", "details": r.stderr[:200]}, status_code=400)
+            logger.warning("yt-dlp info failed for webapp download: %s", r.stderr[:200])
+            return JSONResponse({"error": "Failed to get info"}, status_code=400)
             
         info = json.loads(r.stdout)
         
         formats = [
-            {"id": "best_1080", "label": "MP4 1080p", "ext": "mp4"},
-            {"id": "best_720",  "label": "MP4 720p",  "ext": "mp4"},
-            {"id": "best_480",  "label": "MP4 480p",  "ext": "mp4"},
-            {"id": "best_360",  "label": "MP4 360p",  "ext": "mp4"},
-            {"id": "best_auto", "label": "MP4 Auto",  "ext": "mp4"},
-            {"id": "mp3_320",   "label": "MP3 320kbps", "ext": "mp3"},
-            {"id": "mp3_192",   "label": "MP3 192kbps", "ext": "mp3"},
-            {"id": "m4a_best",  "label": "M4A Best",  "ext": "m4a"}
+            {"id": "best_1080", "kind": "video", "label": "1080p", "description": "Full HD MP4", "ext": "mp4"},
+            {"id": "best_720",  "kind": "video", "label": "720p",  "description": "HD MP4", "ext": "mp4"},
+            {"id": "best_480",  "kind": "video", "label": "480p",  "description": "Balanced MP4", "ext": "mp4"},
+            {"id": "best_360",  "kind": "video", "label": "360p",  "description": "Small MP4", "ext": "mp4"},
+            {"id": "best_auto", "kind": "video", "label": "Auto",  "description": "Best available MP4", "ext": "mp4"},
+            {"id": "mp3_320",   "kind": "audio", "label": "MP3 320", "description": "High quality audio", "ext": "mp3"},
+            {"id": "mp3_192",   "kind": "audio", "label": "MP3 192", "description": "Smaller audio file", "ext": "mp3"},
+            {"id": "m4a_best",  "kind": "audio", "label": "M4A", "description": "Best source audio", "ext": "m4a"}
         ]
         
         return {
@@ -317,10 +372,7 @@ async def download_start(
     if tg_id is None:
         raise HTTPException(status_code=401, detail="invalid_init_data")
         
-    url = req.url
-    platform = detect_platform(url)
-    if platform == "unknown":
-        raise HTTPException(status_code=400, detail="Unsupported platform")
+    url, platform = _validate_download_url(req.url)
         
     today = datetime.utcnow().date()
     stmt = select(SiteDownloadJob).where(
@@ -333,13 +385,14 @@ async def download_start(
     if today_count >= 5:
         raise HTTPException(status_code=429, detail="Daily limit of 5 downloads reached")
 
+    format_value = _validate_download_format(req.format)
     job_uuid = str(uuid.uuid4())
     job = SiteDownloadJob(
         uuid=job_uuid,
         telegram_id=tg_id,
         platform=platform,
         source_url=url,
-        format=req.format,
+        format=format_value,
         clean_metadata=req.clean_metadata,
         status=JobStatus.pending
     )
@@ -375,7 +428,7 @@ async def get_download_job(
         
     return {
         "uuid": job.uuid,
-        "status": job.status,
+        "status": job.status.value if hasattr(job.status, "value") else str(job.status),
         "platform": job.platform,
         "title": job.original_title or "Video",
         "file_size_bytes": job.file_size_bytes,
@@ -390,6 +443,8 @@ async def download_result(
     t: Annotated[Optional[str], Query(description="Signed token")] = None,
     x_telegram_init_data: Annotated[Optional[str], Header(alias="X-Telegram-Init-Data")] = None,
 ):
+    from core.file_utils import validate_file_path
+
     tg_id = _resolve_result_telegram_id(job_id, t, x_telegram_init_data)
     
     stmt = select(SiteDownloadJob).where(SiteDownloadJob.uuid == job_id, SiteDownloadJob.telegram_id == tg_id)
@@ -399,7 +454,11 @@ async def download_result(
     if not job or job.status != JobStatus.done or not job.file_path:
         raise HTTPException(status_code=404, detail="File not ready or not found")
         
-    path = Path(job.file_path)
+    try:
+        path = validate_file_path(job.file_path, [settings.temp_upload_dir, settings.temp_processed_dir])
+    except ValueError as e:
+        logger.error(f"Site download path validation failed for job {job_id}: {e}")
+        raise HTTPException(status_code=410, detail="File deleted or not found")
     if not path.exists():
         raise HTTPException(status_code=410, detail="File deleted or not found")
         

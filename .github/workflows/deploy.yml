@@ -12,15 +12,15 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
-          username: root
+          username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /root/metacleaner_bot
+            cd "${{ secrets.DEPLOY_PATH }}"
             git pull origin main
             source .venv/bin/activate
             pip install -r requirements.txt --quiet
             pip install -U yt-dlp --quiet
             python -m alembic upgrade head
-            systemctl restart metacleaner-bot metacleaner-worker metacleaner-admin
+            sudo systemctl restart metacleaner-bot metacleaner-worker metacleaner-beat metacleaner-admin
             sleep 3
-            systemctl is-active metacleaner-bot metacleaner-worker metacleaner-admin
+            systemctl is-active metacleaner-bot metacleaner-worker metacleaner-beat metacleaner-admin

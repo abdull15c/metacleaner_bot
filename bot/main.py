@@ -111,6 +111,8 @@ async def main():
     setup_logging()
     await ensure_runtime(bot)
     if settings.telegram_webhook_url:
+        if not settings.telegram_webhook_secret:
+            raise RuntimeError("TELEGRAM_WEBHOOK_SECRET is required when TELEGRAM_WEBHOOK_URL is configured")
         log.info(f"Setting webhook to {settings.telegram_webhook_url}")
         await bot.set_webhook(
             url=settings.telegram_webhook_url,

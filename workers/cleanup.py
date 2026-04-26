@@ -35,9 +35,9 @@ def cleanup_job_files_task(job_uuid):
 def periodic_cleanup_task():
     async def _run():
         from datetime import datetime, timedelta, timezone
-        from sqlalchemy import update
+        from sqlalchemy import and_, select, update
         from core.database import get_db_session
-        from core.models import Job, JobStatus, SystemLog, LogLevel
+        from core.models import Job, JobStatus, SiteDownloadJob, SystemLog, LogLevel
         from core.services.job_service import JobService
         from core.services.settings_service import SettingsService
         from storage.local import storage
@@ -63,6 +63,13 @@ def periodic_cleanup_task():
                 .where(Job.status.in_([JobStatus.processing, JobStatus.downloading]))
                 .where(Job.started_at < stuck_cutoff)
                 .values(status=JobStatus.failed, error_message="Timeout: stuck in processing")
+            )
+
+            await session.execute(
+                update(SiteDownloadJob)
+                .where(SiteDownloadJob.status.in_([JobStatus.pending, JobStatus.downloading, JobStatus.processing]))
+                .where(SiteDownloadJob.created_at < stuck_cutoff)
+                .values(status=JobStatus.failed, error_message="Timeout: stuck site download")
             )
             
             await session.commit()
@@ -107,8 +114,22 @@ def periodic_cleanup_task():
             for job in jobs:
                 _del(job.temp_original_path); _del(job.temp_processed_path)
                 await JobService(session).mark_cleanup_done(job)
-            if jobs: await session.commit()
-        return {"cleaned": len(jobs), "orphaned": _orphan_cleanup()}
+
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=ttl)
+            site_result = await session.execute(
+                select(SiteDownloadJob).where(and_(
+                    SiteDownloadJob.cleanup_done == False,
+                    SiteDownloadJob.status.in_([JobStatus.done, JobStatus.failed, JobStatus.cancelled]),
+                    SiteDownloadJob.created_at <= cutoff,
+                ))
+            )
+            site_jobs = list(site_result.scalars().all())
+            for site_job in site_jobs:
+                _del(site_job.file_path)
+                site_job.cleanup_done = True
+            if jobs or site_jobs:
+                await session.commit()
+        return {"cleaned": len(jobs), "site_cleaned": len(site_jobs), "orphaned": _orphan_cleanup()}
     return asyncio.run(_run())
 
 

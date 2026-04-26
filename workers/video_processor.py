@@ -138,10 +138,15 @@ def process_video_task(self, job_uuid):
                 return {"error":str(e)}
             except Exception as e:
                 logger.exception(f"Unexpected error job {job_uuid}")
-                try:
-                    await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
-                except Exception as update_error:
-                    # SECURITY FIX: Логирование вместо молчаливого игнорирования
-                    logger.error(f"Failed to update job status after error: {update_error}", exc_info=True)
+                if self.request.retries >= self.max_retries:
+                    try:
+                        await svc.update_status(job, JobStatus.failed, str(e)[:200]); await session.commit()
+                    except Exception as update_error:
+                        logger.error(f"Failed to update job status after error: {update_error}", exc_info=True)
+                    from workers.sender import notify_failure_task
+                    notify_failure_task.delay(job_uuid)
+                    return {"error": str(e)}
+                await svc.update_status(job, JobStatus.pending)
+                await session.commit()
                 raise self.retry(exc=e)
     return asyncio.run(_run())

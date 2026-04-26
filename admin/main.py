@@ -32,9 +32,11 @@ async def telegram_webhook(
     from aiogram.types import Update
     from bot.main import bot, dp, ensure_runtime
 
-    if app_settings.telegram_webhook_secret:
-        if x_telegram_bot_api_secret_token != app_settings.telegram_webhook_secret:
-            raise HTTPException(status_code=403, detail="invalid_webhook_secret")
+    if not app_settings.telegram_webhook_secret:
+        logger.error("Telegram webhook rejected: TELEGRAM_WEBHOOK_SECRET is not configured")
+        raise HTTPException(status_code=503, detail="webhook_secret_not_configured")
+    if x_telegram_bot_api_secret_token != app_settings.telegram_webhook_secret:
+        raise HTTPException(status_code=403, detail="invalid_webhook_secret")
 
     await ensure_runtime(bot)
     update = Update.model_validate(await request.json(), context={"bot": bot})

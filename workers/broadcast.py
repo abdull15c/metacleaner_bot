@@ -45,7 +45,12 @@ def send_broadcast_chunk_task(broadcast_id):
                     select(BroadcastRecipient).where(BroadcastRecipient.id == rec.id)
                     .options(selectinload(BroadcastRecipient.user)))
                 rec_full = rr.scalar_one_or_none()
-                if not rec_full or not rec_full.user:
+                if not rec_full:
+                    failed += 1
+                    bc.failed_count += 1
+                    await session.commit()
+                    continue
+                if not rec_full.user:
                     failed += 1
                     bc.failed_count += 1
                     rec_full.status = RecipientStatus.failed

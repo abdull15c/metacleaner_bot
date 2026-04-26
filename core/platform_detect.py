@@ -105,22 +105,29 @@ def validate_url_security(url: str) -> tuple[bool, str]:
         return False, f"URL validation error: {str(e)}"
 
 def detect_platform(url: str) -> str:
-    url = url.lower()
-    if "youtube.com" in url or "youtu.be" in url:
+    try:
+        parsed = urlparse(url.strip().lower())
+    except Exception:
+        return "unknown"
+
+    host = (parsed.hostname or "").lstrip(".")
+    path = parsed.path or ""
+
+    if host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be":
         return "youtube"
-    elif "tiktok.com" in url:
+    elif host == "tiktok.com" or host.endswith(".tiktok.com"):
         return "tiktok"
-    elif "instagram.com" in url:
+    elif host == "instagram.com" or host.endswith(".instagram.com"):
         return "instagram"
-    elif "twitter.com" in url or "x.com" in url:
+    elif host == "twitter.com" or host.endswith(".twitter.com") or host == "x.com" or host.endswith(".x.com"):
         return "twitter"
-    elif "vk.com/video" in url or "vk.com/clip" in url:
+    elif (host == "vk.com" or host.endswith(".vk.com")) and (path.startswith("/video") or path.startswith("/clip")):
         return "vk"
-    elif "facebook.com" in url or "fb.watch" in url:
+    elif host == "facebook.com" or host.endswith(".facebook.com") or host == "fb.watch":
         return "facebook"
-    elif "vimeo.com" in url:
+    elif host == "vimeo.com" or host.endswith(".vimeo.com"):
         return "vimeo"
-    elif "dailymotion.com" in url:
+    elif host == "dailymotion.com" or host.endswith(".dailymotion.com"):
         return "dailymotion"
     return "unknown"
 

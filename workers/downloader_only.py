@@ -2,12 +2,15 @@ import asyncio
 import logging
 import subprocess
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from core.config import settings
 from core.database import get_db_session
 from core.models import SiteDownloadJob, JobStatus, DownloadFormat
+from core.platform_detect import validate_url_security
+from core.url_validator import sanitize_url_for_logging
 from workers.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,7 @@ def get_cookies_for_platform(platform: str) -> Optional[Path]:
     return None
 
 def get_format_args(format_enum: str) -> list:
+    format_enum = DownloadFormat(format_enum)
     format_map = {
         DownloadFormat.best_1080: ["--format", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]"],
         DownloadFormat.best_720:  ["--format", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]"],
@@ -39,6 +43,7 @@ def get_format_args(format_enum: str) -> list:
     return format_map.get(format_enum, ["--format", "best"])
 
 def get_extension(format_enum: str) -> str:
+    format_enum = DownloadFormat(format_enum)
     if format_enum in [DownloadFormat.mp3_320, DownloadFormat.mp3_192]:
         return "mp3"
     elif format_enum == DownloadFormat.m4a_best:
@@ -56,7 +61,15 @@ def download_only_task(job_uuid: str):
             if not job or job.status == JobStatus.cancelled:
                 return {"status": "cancelled or not found"}
             
+            is_valid, error_msg = validate_url_security(job.source_url)
+            if not is_valid:
+                job.status = JobStatus.failed
+                job.error_message = f"Invalid URL: {error_msg}"[:500]
+                await session.commit()
+                return {"error": "invalid_url"}
+
             job.status = JobStatus.downloading
+            job.started_at = datetime.now(timezone.utc)
             await session.commit()
 
             try:
@@ -91,7 +104,12 @@ def download_only_task(job_uuid: str):
                 
                 cmd.extend(["--output", template, "--quiet", "--no-warnings", job.source_url])
                 
-                logger.info(f"Running yt-dlp for job {job_uuid}: {' '.join(cmd)}")
+                logger.info(
+                    "Running yt-dlp for site download job %s platform=%s url=%s",
+                    job_uuid,
+                    job.platform,
+                    sanitize_url_for_logging(job.source_url),
+                )
                 
                 dl_r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
                 if dl_r.returncode != 0:
@@ -103,6 +121,9 @@ def download_only_task(job_uuid: str):
                 
                 downloaded_file = files[0]
                 final_file = downloaded_file
+                if downloaded_file.stat().st_size > settings.max_file_size_bytes:
+                    downloaded_file.unlink(missing_ok=True)
+                    raise Exception("Downloaded file exceeds size limit")
                 
                 # Strip metadata if requested
                 if job.clean_metadata:
@@ -120,19 +141,73 @@ def download_only_task(job_uuid: str):
                     
                     downloaded_file.unlink(missing_ok=True)
                     final_file = clean_file
+                    if final_file.stat().st_size > settings.max_file_size_bytes:
+                        final_file.unlink(missing_ok=True)
+                        raise Exception("Processed file exceeds size limit")
                 
                 # Update job success
                 job.file_path = str(final_file)
                 job.file_size_bytes = final_file.stat().st_size
                 job.status = JobStatus.done
+                job.completed_at = datetime.now(timezone.utc)
                 await session.commit()
+                try:
+                    await _notify_download_ready(job)
+                except Exception:
+                    logger.exception("Failed to notify site download completion for %s", job_uuid)
                 return {"status": "done"}
                 
             except Exception as e:
                 logger.exception(f"Download failed for {job_uuid}")
                 job.status = JobStatus.failed
                 job.error_message = str(e)[:500]
+                job.completed_at = datetime.now(timezone.utc)
                 await session.commit()
+                try:
+                    await _notify_download_failed(job)
+                except Exception:
+                    logger.exception("Failed to notify site download failure for %s", job_uuid)
                 return {"error": str(e)}
 
     return asyncio.run(_run())
+
+
+async def _notify_download_ready(job: SiteDownloadJob) -> None:
+    if not settings.bot_token or not settings.public_download_base_url:
+        return
+    from aiogram import Bot
+    from urllib.parse import quote
+    from webapp.result_token import create_result_download_token
+
+    bot = Bot(token=settings.bot_token)
+    try:
+        token = create_result_download_token(job.uuid, job.telegram_id)
+        link = f"{settings.public_download_base_url}/api/webapp/download/result/{job.uuid}?t={quote(token)}"
+        title = (job.original_title or "Видео")[:120]
+        await bot.send_message(
+            chat_id=job.telegram_id,
+            text=(
+                f"✅ <b>Скачивание готово.</b>\n"
+                f"<b>{title}</b>\n\n"
+                f"<a href=\"{link}\">⬇️ Скачать файл</a>\n"
+                f"Файл будет удалён через {settings.cleanup_ttl_minutes} минут."
+            ),
+            parse_mode="HTML",
+        )
+    finally:
+        await bot.session.close()
+
+
+async def _notify_download_failed(job: SiteDownloadJob) -> None:
+    if not settings.bot_token:
+        return
+    from aiogram import Bot
+
+    bot = Bot(token=settings.bot_token)
+    try:
+        await bot.send_message(
+            chat_id=job.telegram_id,
+            text="❌ Не удалось скачать файл. Проверьте ссылку или попробуйте позже.",
+        )
+    finally:
+        await bot.session.close()

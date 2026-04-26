@@ -9,6 +9,16 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-22.04        # зафиксировать Ubuntu (не latest)
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +38,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short -x
+        run: python -m pytest tests/ -v --tb=short
         env:
           BOT_TOKEN: "1234567890:test_token_aaaaaaaaaaaaaaaaaaaaaaaaaaa"
           ADMIN_SECRET_KEY: "test_secret_key_that_is_long_enough_32c"

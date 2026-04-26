@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD environment variable is required}
       POSTGRES_DB: metacleaner
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +24,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     command: redis-server --appendonly yes
     volumes:
       - redisdata:/data
@@ -50,7 +50,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - temp_data:/app/temp
+      - logs_data:/app/logs
     command: python -m bot
+    cpus: "1.0"
+    mem_limit: 1g
     
     # SECURITY FIX: Ограничения ресурсов
     deploy:
@@ -81,7 +86,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - temp_data:/app/temp
+      - logs_data:/app/logs
     command: python -m admin
+    cpus: "0.5"
+    mem_limit: 512m
     
     # SECURITY FIX: Ограничения ресурсов
     deploy:
@@ -120,6 +130,8 @@ services:
       - temp_data:/app/temp
       - logs_data:/app/logs
     command: celery -A workers.celery_app worker -l INFO -c 2 -Q video,broadcast,cleanup,celery
+    cpus: "2.0"
+    mem_limit: 4g
     
     # SECURITY FIX: Ограничения ресурсов (больше для обработки видео)
     deploy:
@@ -149,6 +161,8 @@ services:
       redis:
         condition: service_healthy
     command: celery -A workers.celery_app beat -l INFO
+    cpus: "0.25"
+    mem_limit: 256m
     
     # SECURITY FIX: Ограничения ресурсов
     deploy:

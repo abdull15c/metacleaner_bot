@@ -178,6 +178,12 @@ async def cancel_job_cb(callback: CallbackQuery):
         if job:
             await js.update_status(job, JobStatus.cancelled, "Cancelled by user")
             await session.commit()
+            if job.celery_task_id:
+                try:
+                    from workers.celery_app import app as celery_app
+                    celery_app.control.revoke(job.celery_task_id, terminate=True)
+                except Exception as e:
+                    logger.warning("Failed to revoke celery task %s for job %s: %s", job.celery_task_id, job_uuid, e)
     await callback.message.edit_text("❌ Задача отменена.")
 
 @router.message(UnsupportedFileFilter())

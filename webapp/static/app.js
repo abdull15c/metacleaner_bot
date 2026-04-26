@@ -3,9 +3,6 @@
   if (tg) {
     tg.ready();
     tg.expand();
-    if (tg.themeParams && tg.themeParams.bg_color) {
-      document.body.style.background = tg.themeParams.bg_color;
-    }
   }
 
   const pick = document.getElementById("pick");
@@ -32,6 +29,7 @@
     }
     return tg.initData;
   }
+  window.getTelegramInitData = initData;
 
   function showErr(msg) {
     errEl.textContent = msg || "";
@@ -61,6 +59,7 @@
       setTimeout(() => { el.remove(); }, 3000);
     }
   }
+  window.showWebappToast = showToast;
 
   // --- Drag & Drop ---
   const dropZone = document.getElementById("drop-zone");
@@ -79,15 +78,13 @@
 
     ['dragenter', 'dragover'].forEach(eventName => {
       dropZone.addEventListener(eventName, () => {
-        dropZone.style.background = "rgba(59, 130, 246, 0.05)";
-        dropZone.style.borderColor = "var(--tg-theme-button-color, #3b82f6)";
+        dropZone.classList.add("dragover");
       }, false);
     });
 
     ['dragleave', 'drop'].forEach(eventName => {
       dropZone.addEventListener(eventName, () => {
-        dropZone.style.background = "";
-        dropZone.style.borderColor = "var(--tg-theme-hint-color, #ccc)";
+        dropZone.classList.remove("dragover");
       }, false);
     });
 
@@ -147,6 +144,8 @@
       if (btnClear) btnClear.click();
       statusEl.textContent = "";
       errEl.hidden = true;
+      barWrap.hidden = true;
+      bar.style.width = "0%";
       if (doneActions) doneActions.hidden = true;
       form.style.display = "block";
     });
@@ -163,9 +162,9 @@
   const btnRefreshHistory = document.getElementById("btn-refresh-history");
 
   function resetTabs() {
-      if(tabUpload) { tabUpload.classList.remove("active"); tabUpload.style.borderBottomColor = "transparent"; tabUpload.style.color = "var(--tg-theme-hint-color, #888)"; }
-      if(tabDownload) { tabDownload.classList.remove("active"); tabDownload.style.borderBottomColor = "transparent"; tabDownload.style.color = "var(--tg-theme-hint-color, #888)"; }
-      if(tabHistory) { tabHistory.classList.remove("active"); tabHistory.style.borderBottomColor = "transparent"; tabHistory.style.color = "var(--tg-theme-hint-color, #888)"; }
+      if(tabUpload) tabUpload.classList.remove("active");
+      if(tabDownload) tabDownload.classList.remove("active");
+      if(tabHistory) tabHistory.classList.remove("active");
       if(contentUpload) contentUpload.style.display = "none";
       if(contentDownload) contentDownload.style.display = "none";
       if(contentHistory) contentHistory.style.display = "none";
@@ -176,22 +175,16 @@
     if (tab === "upload") {
       if (tabUpload) {
         tabUpload.classList.add("active");
-        tabUpload.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
-        tabUpload.style.color = "var(--tg-theme-text-color, #000)";
       }
       if (contentUpload) contentUpload.style.display = "block";
     } else if (tab === "download") {
       if (tabDownload) {
         tabDownload.classList.add("active");
-        tabDownload.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
-        tabDownload.style.color = "var(--tg-theme-text-color, #000)";
       }
       if (contentDownload) contentDownload.style.display = "block";
     } else {
       if (tabHistory) {
         tabHistory.classList.add("active");
-        tabHistory.style.borderBottomColor = "var(--tg-theme-button-color, #3b82f6)";
-        tabHistory.style.color = "var(--tg-theme-text-color, #000)";
       }
       if (contentHistory) contentHistory.style.display = "block";
       loadHistory();
@@ -205,8 +198,11 @@
   
   async function loadHistory() {
     try {
-      if (!lastInitData && tg.initData) lastInitData = tg.initData;
-      if (!lastInitData) return;
+      if (!lastInitData) lastInitData = initData();
+      if (!lastInitData) {
+        if (historyList) historyList.innerHTML = `<div style="text-align: center; padding: 30px; color: var(--tg-theme-hint-color, #888);">Откройте приложение через Telegram, чтобы увидеть историю.</div>`;
+        return;
+      }
       
       const r = await fetch("/api/webapp/jobs", {
         headers: { "X-Telegram-Init-Data": lastInitData },
@@ -235,24 +231,39 @@
         else if (j.status === "pending") statusText = "В очереди";
         else if (j.status === "processing") statusText = "Обработка";
         
-        let actionHtml = "";
-        if (j.status === "done" && j.result_download_available) {
-          actionHtml = `<button class="hi-action dl" onclick="window.downloadResult('${j.uuid}', '${lastInitData}')">Скачать</button>`;
-        }
-        
         let dateStr = new Date(j.created_at).toLocaleDateString("ru-RU", {day:"numeric", month:"short", hour:"2-digit", minute:"2-digit"});
-        
-        div.innerHTML = `
-          <div class="hi-icon">${icon}</div>
-          <div class="hi-content">
-            <div class="hi-title">${j.original_filename || "video.mp4"}</div>
-            <div class="hi-meta">
-              <span>${dateStr}</span>
-              <span>${statusText}</span>
-            </div>
-          </div>
-          <div>${actionHtml}</div>
-        `;
+
+        const iconEl = document.createElement("div");
+        iconEl.className = "hi-icon";
+        iconEl.textContent = icon;
+
+        const contentEl = document.createElement("div");
+        contentEl.className = "hi-content";
+
+        const titleEl = document.createElement("div");
+        titleEl.className = "hi-title";
+        titleEl.textContent = j.original_filename || "video.mp4";
+
+        const metaEl = document.createElement("div");
+        metaEl.className = "hi-meta";
+        const dateEl = document.createElement("span");
+        dateEl.textContent = dateStr;
+        const statusTextEl = document.createElement("span");
+        statusTextEl.textContent = statusText;
+        metaEl.append(dateEl, statusTextEl);
+        contentEl.append(titleEl, metaEl);
+
+        const actionEl = document.createElement("div");
+        if (j.status === "done" && j.result_download_available) {
+          const btn = document.createElement("button");
+          btn.className = "hi-action dl";
+          btn.type = "button";
+          btn.textContent = "Скачать";
+          btn.addEventListener("click", () => window.downloadResult(j.uuid, lastInitData));
+          actionEl.appendChild(btn);
+        }
+
+        div.append(iconEl, contentEl, actionEl);
         if (historyList) historyList.appendChild(div);
       });
     } catch (e) {
@@ -433,6 +444,8 @@
 
 let downloadJobUuid = null;
 let downloadPollInterval = null;
+let availableDownloadFormats = [];
+let selectedDownloadKind = "video";
 
 const dlUrlInput = document.getElementById('download-url');
 const btnGetInfo = document.getElementById('btn-get-info');
@@ -441,6 +454,86 @@ const dlStep1 = document.getElementById('download-step-1');
 const dlStep2 = document.getElementById('download-step-2');
 const dlStep3 = document.getElementById('download-step-3');
 const dlStep4 = document.getElementById('download-step-4');
+const formatOptions = document.getElementById('format-options');
+const formatSelect = document.getElementById('dl-format');
+const metadataOption = document.getElementById('metadata-option');
+const mediaSwitchButtons = document.querySelectorAll('.media-switch-btn');
+
+function currentInitData() {
+    return typeof window.getTelegramInitData === "function" ? window.getTelegramInitData() : "";
+}
+
+function showDownloadError(message) {
+    if (typeof window.showWebappToast === "function") {
+        window.showWebappToast(message, "error");
+    } else {
+        alert(message);
+    }
+}
+
+function formatKind(format) {
+    if (format.kind) return format.kind;
+    return String(format.id || "").startsWith("mp3_") || String(format.id || "").startsWith("m4a_") ? "audio" : "video";
+}
+
+function selectDownloadFormat(formatId) {
+    if (formatSelect) formatSelect.value = formatId;
+    if (formatOptions) {
+        formatOptions.querySelectorAll(".format-card").forEach(card => {
+            card.classList.toggle("active", card.dataset.formatId === formatId);
+        });
+    }
+}
+
+function renderDownloadFormats(kind = selectedDownloadKind) {
+    selectedDownloadKind = kind;
+    mediaSwitchButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.kind === kind));
+    if (metadataOption) {
+        metadataOption.classList.toggle("is-audio", kind === "audio");
+    }
+    if (btnStartDownload) {
+        btnStartDownload.textContent = kind === "audio" ? "Скачать аудио" : "Скачать видео";
+    }
+    if (!formatOptions || !formatSelect) return;
+
+    formatOptions.innerHTML = "";
+    formatSelect.innerHTML = "";
+
+    const filtered = availableDownloadFormats.filter(f => formatKind(f) === kind);
+    if (filtered.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "format-empty";
+        empty.textContent = "Нет доступных вариантов для этого типа.";
+        formatOptions.appendChild(empty);
+        return;
+    }
+    filtered.forEach((f, index) => {
+        const opt = document.createElement('option');
+        opt.value = f.id;
+        opt.textContent = f.label;
+        formatSelect.appendChild(opt);
+
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "format-card";
+        card.dataset.formatId = f.id;
+        const main = document.createElement("span");
+        main.className = "format-main";
+        main.textContent = f.label;
+        const sub = document.createElement("span");
+        sub.className = "format-sub";
+        sub.textContent = f.description || f.ext || "";
+        card.append(main, sub);
+        card.addEventListener("click", () => selectDownloadFormat(f.id));
+        formatOptions.appendChild(card);
+
+        if (index === 0) selectDownloadFormat(f.id);
+    });
+}
+
+mediaSwitchButtons.forEach(btn => {
+    btn.addEventListener("click", () => renderDownloadFormats(btn.dataset.kind));
+});
 
 if (btnGetInfo) {
     btnGetInfo.addEventListener('click', async () => {
@@ -451,11 +544,18 @@ if (btnGetInfo) {
         btnGetInfo.textContent = "Получение...";
         
         try {
+            const idata = currentInitData();
+            if (!idata) {
+                showDownloadError("Откройте приложение через Telegram.");
+                btnGetInfo.disabled = false;
+                btnGetInfo.textContent = "Получить информацию";
+                return;
+            }
             const resp = await fetch('/api/webapp/download/info', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Telegram-Init-Data': initData()
+                    'X-Telegram-Init-Data': idata
                 },
                 body: JSON.stringify({ url })
             });
@@ -476,14 +576,8 @@ if (btnGetInfo) {
             const sec = data.duration_sec % 60;
             document.getElementById('dl-platform').textContent = `${data.platform.toUpperCase()} • ${min}:${sec.toString().padStart(2, '0')}`;
             
-            const formatSelect = document.getElementById('dl-format');
-            formatSelect.innerHTML = '';
-            data.formats.forEach(f => {
-                const opt = document.createElement('option');
-                opt.value = f.id;
-                opt.textContent = f.label;
-                formatSelect.appendChild(opt);
-            });
+            availableDownloadFormats = Array.isArray(data.formats) ? data.formats : [];
+            renderDownloadFormats("video");
             
             dlStep1.style.display = 'none';
             dlStep2.style.display = 'block';
@@ -506,18 +600,29 @@ if (document.getElementById('btn-dl-back')) {
 if (btnStartDownload) {
     btnStartDownload.addEventListener('click', async () => {
         const url = dlUrlInput.value.trim();
-        const format = document.getElementById('dl-format').value;
+        const format = formatSelect ? formatSelect.value : "";
         const clean_metadata = document.getElementById('dl-clean-metadata').checked;
+        if (!format) {
+            showDownloadError("Выберите качество или формат.");
+            return;
+        }
         
         dlStep2.style.display = 'none';
         dlStep3.style.display = 'block';
         
         try {
+            const idata = currentInitData();
+            if (!idata) {
+                showDownloadError("Откройте приложение через Telegram.");
+                dlStep3.style.display = 'none';
+                dlStep2.style.display = 'block';
+                return;
+            }
             const resp = await fetch('/api/webapp/download/start', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Telegram-Init-Data': initData()
+                    'X-Telegram-Init-Data': idata
                 },
                 body: JSON.stringify({ url, format, clean_metadata })
             });
@@ -546,12 +651,32 @@ function pollDownloadJob() {
     
     downloadPollInterval = setInterval(async () => {
         try {
+            const idata = currentInitData();
+            if (!idata) {
+                clearInterval(downloadPollInterval);
+                showDownloadError("Сессия Telegram недоступна. Откройте приложение заново из бота.");
+                dlStep3.style.display = 'none';
+                dlStep1.style.display = 'block';
+                return;
+            }
             const resp = await fetch(`/api/webapp/download/job/${downloadJobUuid}`, {
-                headers: { 'X-Telegram-Init-Data': initData() }
+                headers: { 'X-Telegram-Init-Data': idata }
             });
             
             if (resp.ok) {
                 const data = await resp.json();
+                const statusText = document.getElementById('dl-status-text');
+                if (statusText) {
+                    const labels = {
+                        pending: "В очереди...",
+                        downloading: "Скачиваем файл...",
+                        processing: "Очищаем метаданные...",
+                        done: "Готово",
+                        failed: "Ошибка скачивания",
+                        cancelled: "Отменено"
+                    };
+                    statusText.textContent = labels[data.status] || "Обрабатываем...";
+                }
                 
                 if (data.status === 'done') {
                     clearInterval(downloadPollInterval);
@@ -561,7 +686,7 @@ function pollDownloadJob() {
                     const btnDlFile = document.getElementById('btn-download-file');
                     btnDlFile.onclick = (e) => {
                         e.preventDefault();
-                        window.downloadResult(downloadJobUuid, initData(), true, data.title);
+                        window.downloadResult(downloadJobUuid, currentInitData(), true, data.title);
                     };
                 } else if (data.status === 'failed' || data.status === 'cancelled') {
                     clearInterval(downloadPollInterval);
@@ -569,9 +694,17 @@ function pollDownloadJob() {
                     dlStep3.style.display = 'none';
                     dlStep1.style.display = 'block';
                 }
+            } else {
+                clearInterval(downloadPollInterval);
+                showDownloadError("Не удалось получить статус скачивания.");
+                dlStep3.style.display = 'none';
+                dlStep1.style.display = 'block';
             }
         } catch (e) {
-            // ignore temp errors
+            clearInterval(downloadPollInterval);
+            showDownloadError("Сеть недоступна. Попробуйте ещё раз.");
+            dlStep3.style.display = 'none';
+            dlStep1.style.display = 'block';
         }
     }, 3000);
 }
