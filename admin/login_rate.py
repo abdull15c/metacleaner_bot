@@ -7,6 +7,24 @@ from redis import Redis
 from core.config import get_settings
 
 _WINDOW_SEC = 60
+_memory_counters: dict[str, list[float]] = {}
+
+
+def reset_counters_for_tests() -> None:
+    _memory_counters.clear()
+
+
+def _check_in_memory_rate(ip: str, limit: int) -> None:
+    now = time.time()
+    window_start = now - _WINDOW_SEC
+    attempts = [ts for ts in _memory_counters.get(ip, []) if ts > window_start]
+    if len(attempts) >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много попыток входа. Подождите минуту.",
+        )
+    attempts.append(now)
+    _memory_counters[ip] = attempts
 
 def check_admin_login_rate(request: Request) -> None:
     settings = get_settings()
@@ -16,19 +34,23 @@ def check_admin_login_rate(request: Request) -> None:
         
     client = request.client
     ip = (client.host if client else "") or "unknown"
-    
-    # We use a simple redis counter with expiration
+
+    redis_url = getattr(settings, "redis_url", None)
+    if not redis_url:
+        _check_in_memory_rate(ip, lim)
+        return
+
     try:
-        r = Redis.from_url(settings.redis_url)
+        r = Redis.from_url(redis_url)
         key = f"admin_login_rate:{ip}"
-        
+
         current = r.get(key)
         if current and int(current) >= lim:
             raise HTTPException(
                 status_code=429,
                 detail="Слишком много попыток входа. Подождите минуту.",
             )
-            
+
         pipe = r.pipeline()
         pipe.incr(key)
         pipe.expire(key, _WINDOW_SEC)
@@ -36,7 +58,4 @@ def check_admin_login_rate(request: Request) -> None:
     except HTTPException:
         raise
     except Exception:
-        raise HTTPException(
-            status_code=503,
-            detail="Сервис входа временно недоступен. Попробуйте позже.",
-        )
+        _check_in_memory_rate(ip, lim)

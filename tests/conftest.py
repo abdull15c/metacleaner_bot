@@ -1,6 +1,8 @@
 import asyncio, os, pytest, pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+_ORIGINAL_ASYNCIO_RUN = asyncio.run
+
 os.environ.setdefault("BOT_TOKEN", "1234567890:test_token_aaaaaaaaaaaaaaaaaaaaaaaaaaa")
 os.environ.setdefault("ADMIN_SECRET_KEY", "test_secret_key_that_is_long_enough_32c")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
@@ -31,3 +33,20 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+@pytest.fixture
+def app_schema():
+    from core.database import Base, engine
+
+    async def up():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    async def down():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+
+    _ORIGINAL_ASYNCIO_RUN(up())
+    yield
+    _ORIGINAL_ASYNCIO_RUN(down())

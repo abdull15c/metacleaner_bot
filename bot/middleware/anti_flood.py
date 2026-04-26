@@ -31,7 +31,7 @@ class AntiFloodMiddleware(BaseMiddleware):
         super().__init__()
 
     async def __call__(self, handler, event, data):
-        if not isinstance(event, Message) or not event.from_user:
+        if not self._is_message_like(event):
             return await handler(event, data)
         uid = event.from_user.id
         if self._redis is not None:
@@ -62,3 +62,9 @@ class AntiFloodMiddleware(BaseMiddleware):
         except Exception as e:
             logger.warning("Redis anti-flood failed, allowing message: %s", e)
         return await handler(event, data)
+
+    @staticmethod
+    def _is_message_like(event) -> bool:
+        if isinstance(event, Message):
+            return bool(event.from_user)
+        return hasattr(event, "from_user") and getattr(event, "from_user", None) is not None

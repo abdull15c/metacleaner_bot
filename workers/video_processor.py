@@ -1,4 +1,4 @@
-import asyncio, json, logging, subprocess, uuid
+import asyncio, json, logging, os, subprocess, uuid
 from pathlib import Path
 from core.config import settings
 from core.constants import SUPPORTED_VIDEO_EXTENSIONS
@@ -121,7 +121,7 @@ def process_video_task(self, job_uuid):
             try:
                 meta_before = extract_metadata(input_path)
                 output_path = get_output_path(input_path, action=action)
-                settings.temp_processed_dir.mkdir(parents=True, exist_ok=True)
+                os.makedirs(settings.temp_processed_dir, exist_ok=True)
                 run_ffmpeg_action(input_path, output_path, action=action)
                 if not Path(output_path).exists(): raise FFmpegError(-1,"Output not created")
                 meta_after = extract_metadata(output_path)

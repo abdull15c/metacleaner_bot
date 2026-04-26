@@ -13,36 +13,12 @@ import pytest
 from aiogram.types import Message
 
 pytestmark = pytest.mark.integration
-
-
-def _schema_up_down():
-    from core.database import Base, engine
-
-    async def up():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    async def down():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-
-    return up, down
-
-
-@pytest.fixture
-def app_schema():
-    up, down = _schema_up_down()
-    asyncio.run(up())
-    yield
-    asyncio.run(down())
-
-
 @pytest.fixture
 def admin_client(app_schema):
     from starlette.testclient import TestClient
     from admin.main import app
 
-    with TestClient(app) as client:
+    with TestClient(app, follow_redirects=False) as client:
         yield client
 
 
@@ -195,10 +171,14 @@ async def test_upload_celery_dispatch_failure_marks_job_failed(app_schema, mocke
         "workers.video_processor.process_video_task.delay",
         side_effect=ConnectionError("broker down"),
     )
+    mocker.patch(
+        "core.mime_validator.validate_video_file_mime",
+        return_value=(True, "OK"),
+    )
 
     from pathlib import Path
 
-    from bot.routers.upload import handle_video
+    from bot.routers.upload import confirm_action_cb, handle_video
     from core.database import async_session_factory
     from core.models import Job, JobStatus
     from core.services.settings_service import SettingsService
@@ -210,7 +190,7 @@ async def test_upload_celery_dispatch_failure_marks_job_failed(app_schema, mocke
             await SettingsService(session).seed_defaults()
             await session.commit()
 
-    asyncio.run(seed())
+    await seed()
 
     doc = MagicMock()
     doc.file_id = "fid"
@@ -235,7 +215,11 @@ async def test_upload_celery_dispatch_failure_marks_job_failed(app_schema, mocke
     bot.get_file = AsyncMock(return_value=MagicMock(file_path="path"))
     bot.download_file = AsyncMock(side_effect=fake_download)
 
-    await handle_video(message, bot)
+    from core.models import User
+
+    db_user = User(id=1, telegram_id=uid, username="u", first_name="U")
+
+    await handle_video(message, bot, db_user)
 
     async with async_session_factory() as session:
         from sqlalchemy import select
@@ -243,6 +227,19 @@ async def test_upload_celery_dispatch_failure_marks_job_failed(app_schema, mocke
 
         u = (await session.execute(select(User).where(User.telegram_id == uid))).scalar_one()
         r = await session.execute(select(Job).where(Job.user_id == u.id))
+        j = r.scalar_one()
+
+    callback = MagicMock(spec=Message)
+    callback.data = f"confirm_action:{j.uuid}:clean:fid"
+    callback.message = MagicMock()
+    callback.message.edit_text = AsyncMock()
+
+    await confirm_action_cb(callback, bot)
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+
+        r = await session.execute(select(Job).where(Job.uuid == j.uuid))
         j = r.scalar_one()
         assert j.status == JobStatus.failed
         assert "Queue dispatch" in (j.error_message or "")

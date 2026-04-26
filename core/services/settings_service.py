@@ -1,9 +1,12 @@
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Setting
+
+logger = logging.getLogger(__name__)
 
 DEFAULTS = {
     "cleanup_ttl_minutes":      ("30",    "Minutes before temp files force-deleted"),
@@ -41,11 +44,12 @@ class SettingsService:
         try:
             await client.ping()
             return client
-        except Exception:
+        except Exception as e:
             try:
-                await client.close()
-            except Exception:
-                pass
+                await client.aclose()
+            except Exception as close_error:
+                logger.warning("Failed to close redis client after ping error: %s", close_error)
+            logger.warning("Redis settings cache unavailable: %s", e)
             return None
 
     async def get(self, key, default=None):
@@ -60,10 +64,10 @@ class SettingsService:
                         return json.loads(cached)
                     except Exception:
                         return cached.decode("utf-8")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to read setting %s from redis cache: %s", key, e)
             finally:
-                await r_client.close()
+                await r_client.aclose()
                 r_client = None
 
         r = await self.session.execute(select(Setting).where(Setting.key == key))
@@ -80,10 +84,10 @@ class SettingsService:
         if r_client is not None:
             try:
                 await r_client.setex(cache_key, 60, json.dumps(val) if not isinstance(val, str) else val)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to write setting %s to redis cache: %s", key, e)
             finally:
-                await r_client.close()
+                await r_client.aclose()
         return val
 
     async def set(self, key, value, admin_id=None):
@@ -113,9 +117,6 @@ class SettingsService:
             try: 
                 out[s.key] = json.loads(s.value)
             except Exception as e:
-                # SECURITY FIX: Логирование вместо молчаливого игнорирования
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Failed to parse setting {s.key}: {e}")
                 out[s.key] = s.value
         return out

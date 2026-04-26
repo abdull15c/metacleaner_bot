@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends, Header, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +17,23 @@ from core.telegram_html import sanitize_broadcast_html
 from webapp.bootstrap import mount_webapp
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="MetaCleaner Admin", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app_settings.ensure_dirs()
+    from core.database import init_db
+
+    await init_db()
+    async with get_db_session() as session:
+        from core.services.settings_service import SettingsService
+
+        await SettingsService(session).seed_defaults()
+        await session.commit()
+    yield
+
+
+app = FastAPI(title="MetaCleaner Admin", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 try:
     from prometheus_fastapi_instrumentator import Instrumentator
@@ -110,7 +127,7 @@ async def require_admin(request: Request, session: AsyncSession = Depends(get_db
 
 @app.get("/admin/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    return templates.TemplateResponse(request, "login.html", {"request": request, "error": None})
 
 
 @app.post("/admin/login")
@@ -122,7 +139,7 @@ async def login_submit(request: Request, session: AsyncSession = Depends(get_db)
     password = str(form.get("password","")).strip()
     admin = await authenticate(session, username, password)
     if not admin:
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Неверный логин или пароль"}, status_code=401)
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Неверный логин или пароль"}, status_code=401)
     resp = RedirectResponse("/admin/dashboard", status_code=303)
     set_cookie(resp, admin.id)
     return resp
@@ -146,7 +163,7 @@ async def dashboard(request: Request, session: AsyncSession = Depends(get_db), a
     from core.models import JobStatus
     from storage.local import storage
     js = JobService(session); us = UserService(session)
-    return templates.TemplateResponse("dashboard.html", {
+    return templates.TemplateResponse(request, "dashboard.html", {
         "request": request, "admin": admin, "active_page": "dashboard",
         "total_jobs":      await js.count_total(),
         "today_jobs":      await js.count_today(),
@@ -252,7 +269,7 @@ async def jobs_list(request: Request, page: int = 1, q: str = "", status: str = 
     r = await session.execute(stmt.order_by(Job.created_at.desc()).limit(limit).offset(offset))
     jobs = list(r.scalars().all())
 
-    return templates.TemplateResponse("jobs.html", {
+    return templates.TemplateResponse(request, "jobs.html", {
         "request": request, "admin": admin, "active_page": "jobs",
         "jobs": jobs,
         "page": page, "total_pages": max(1, (total+limit-1)//limit), "total": total,
@@ -263,7 +280,7 @@ async def jobs_list(request: Request, page: int = 1, q: str = "", status: str = 
 @app.get("/admin/jobs/{job_id}", response_class=HTMLResponse)
 async def job_detail(request: Request, job_id: str, session: AsyncSession = Depends(get_db), admin=Depends(require_admin)):
     from core.services.job_service import JobService
-    return templates.TemplateResponse("job_detail.html", {
+    return templates.TemplateResponse(request, "job_detail.html", {
         "request": request, "admin": admin, "active_page": "jobs",
         "job": await JobService(session).get_by_uuid(job_id),
     })
@@ -303,7 +320,7 @@ async def users_list(request: Request, page: int = 1, q: str = "", session: Asyn
 
     r = await session.execute(stmt.order_by(User.created_at.desc()).limit(limit).offset(offset))
     
-    return templates.TemplateResponse("users.html", {
+    return templates.TemplateResponse(request, "users.html", {
         "request": request, "admin": admin, "active_page": "users",
         "users": list(r.scalars().all()), "page": page,
         "total_pages": max(1,(total+limit-1)//limit), "total": total,
@@ -317,7 +334,7 @@ async def user_detail(request: Request, telegram_id: int, session: AsyncSession 
     from core.services.job_service import JobService
     us = UserService(session); user = await us.get_by_telegram_id(telegram_id)
     jobs = await JobService(session).get_user_jobs(user.id, limit=10) if user else []
-    return templates.TemplateResponse("user_detail.html", {"request": request, "admin": admin, "active_page": "users", "user": user, "jobs": jobs})
+    return templates.TemplateResponse(request, "user_detail.html", {"request": request, "admin": admin, "active_page": "users", "user": user, "jobs": jobs})
 
 
 @app.post("/admin/users/{telegram_id}/ban")
@@ -345,7 +362,7 @@ async def sponsors_list(request: Request, session: AsyncSession = Depends(get_db
     from core.services.settings_service import SettingsService
     r = await session.execute(select(SponsorChannel))
     force_sub = await SettingsService(session).get("force_sub_enabled", "false")
-    return templates.TemplateResponse("sponsors.html", {
+    return templates.TemplateResponse(request, "sponsors.html", {
         "request": request, "admin": admin, "active_page": "sponsors",
         "channels": list(r.scalars().all()),
         "force_sub_enabled": force_sub == "true"
@@ -405,7 +422,7 @@ async def broadcasts(request: Request, session: AsyncSession = Depends(get_db), 
     from sqlalchemy import select
     from core.models import Broadcast
     r = await session.execute(select(Broadcast).order_by(Broadcast.created_at.desc()).limit(50))
-    return templates.TemplateResponse("broadcasts.html", {
+    return templates.TemplateResponse(request, "broadcasts.html", {
         "request": request, "admin": admin, "active_page": "broadcasts",
         "broadcasts": list(r.scalars().all()),
         "form_error": request.query_params.get("err"),
@@ -468,7 +485,7 @@ async def errors_page(request: Request, page: int = 1, session: AsyncSession = D
     r = await session.execute(select(SystemLog).where(SystemLog.level.in_([LogLevel.ERROR,LogLevel.CRITICAL])).order_by(SystemLog.created_at.desc()).limit(limit).offset(offset))
     total_query = await session.execute(select(func.count(SystemLog.id)).where(SystemLog.level.in_([LogLevel.ERROR,LogLevel.CRITICAL])))
     total = total_query.scalar() or 0
-    return templates.TemplateResponse("errors.html", {
+    return templates.TemplateResponse(request, "errors.html", {
         "request": request, "admin": admin, "active_page": "errors", 
         "logs": list(r.scalars().all()), "page": page,
         "total_pages": max(1, (total + limit - 1) // limit), "total": total
@@ -523,7 +540,7 @@ async def settings_page(request: Request, session: AsyncSession = Depends(get_db
         "saved": request.query_params.get("saved"),
     }
     ctx.update(await _youtube_admin_template_ctx(request, session))
-    return templates.TemplateResponse("settings.html", ctx)
+    return templates.TemplateResponse(request, "settings.html", ctx)
 
 
 @app.post("/admin/settings")
@@ -618,11 +635,3 @@ async def maint_off(request: Request, session: AsyncSession = Depends(get_db), a
     return RedirectResponse("/admin/settings", status_code=303)
 
 
-@app.on_event("startup")
-async def startup():
-    app_settings.ensure_dirs()
-    from core.database import init_db
-    await init_db()
-    async with get_db_session() as session:
-        from core.services.settings_service import SettingsService
-        await SettingsService(session).seed_defaults(); await session.commit()

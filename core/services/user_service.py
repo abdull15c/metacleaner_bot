@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +38,9 @@ class UserService:
         SECURITY FIX: Устранена race condition через атомарную операцию.
         """
         from sqlalchemy import update, case, or_, and_
-        now = datetime.now(timezone.utc)
+
+        # Модель хранит naive UTC timestamps, поэтому и пороги считаем в naive UTC.
+        now = datetime.now(UTC).replace(tzinfo=None)
         reset_threshold = now - timedelta(days=1)
         
         # Атомарная операция: проверка + сброс + инкремент в одном UPDATE
@@ -83,6 +85,7 @@ class UserService:
                 )
             )
             .returning(User.daily_job_count, User.daily_reset_at)
+            .execution_options(synchronize_session=False)
         )
         
         result = await self.session.execute(stmt)

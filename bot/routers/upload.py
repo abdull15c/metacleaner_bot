@@ -165,7 +165,7 @@ async def confirm_action_cb(callback: CallbackQuery, bot: Bot):
             js2 = JobService(session)
             job2 = await js2.get_by_uuid(job_uuid)
             if job2:
-                await js2.update_status(job2, JobStatus.failed, str(e)[:200])
+                await js2.update_status(job2, JobStatus.failed, f"Queue dispatch failed: {e}"[:200])
             await session.commit()
         await callback.message.edit_text(f"❌ Ошибка: {e}")
 

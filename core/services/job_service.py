@@ -81,6 +81,10 @@ class JobService:
         if metadata_after is not None:
             job.metadata_after = truncate_metadata(metadata_after)
 
+        job.status = JobStatus.done
+        job.completed_at = datetime.now(timezone.utc)
+        await self._report(job.id, JobStatus.done.value)
+
     async def set_youtube_consent(self, job, consented):
         job.youtube_consent = consented
         if consented: job.youtube_consent_at = datetime.now(timezone.utc)

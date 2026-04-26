@@ -60,7 +60,7 @@ async def test_process_video_task_with_mock_ffmpeg(mocker, app_schema):
     from unittest.mock import AsyncMock
     
     mocker.patch("workers.video_processor.extract_metadata", return_value={"mock": "data"})
-    mocker.patch("workers.video_processor.strip_metadata", return_value=(True, ""))
+    mocker.patch("workers.video_processor.run_ffmpeg_action", return_value=(True, ""))
     mocker.patch("workers.video_processor.Path.exists", return_value=True)
     mocker.patch("workers.video_processor.Path.stat", return_value=mocker.MagicMock(st_size=1024))
     
@@ -69,6 +69,7 @@ async def test_process_video_task_with_mock_ffmpeg(mocker, app_schema):
     mocker.patch("redis.asyncio.from_url", return_value=redis_mock)
     
     sender_mock = mocker.patch("workers.sender.send_result_task.delay")
+    mocker.patch("workers.sender.notify_failure_task.delay")
 
     async with get_db_session() as session:
         u = User(telegram_id=987654321)
@@ -79,9 +80,6 @@ async def test_process_video_task_with_mock_ffmpeg(mocker, app_schema):
         job.temp_original_path = "/tmp/test.mp4"
         job_uuid = job.uuid
         await session.commit()
-    
-    # We patch asyncio.run to just run the coroutine natively for the test
-    original_run = asyncio.run
     
     async def mock_run(coro):
         return await coro
